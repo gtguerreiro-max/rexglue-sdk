@@ -597,6 +597,11 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
 
   u32 tfetch_index = instr.operands[1].storage_index;
 
+  // The fetch constant is unsigned without an exponent adjustment, known when the pipeline is
+  // created (Modification::pixel.textures_unsigned).
+  const bool textures_unsigned = instr.opcode == FetchOpcode::kTextureFetch && IsPixelShader() &&
+                                 GetDXBCShaderModification().pixel.textures_unsigned;
+
   bool use_computed_lod = instr.attributes.use_computed_lod &&
                           (IsPixelShader() || instr.attributes.use_register_gradients);
   if (instr.opcode == FetchOpcode::kGetTextureComputedLOD &&
@@ -821,7 +826,7 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
         dxbc::Src::kXXXX));
     u32 signs_shift = (tfetch_index & 3) * 8;
     u32 signs_temp = UINT32_MAX;
-    if (instr.opcode == FetchOpcode::kTextureFetch) {
+    if (instr.opcode == FetchOpcode::kTextureFetch && !textures_unsigned) {
       signs_temp = PushSystemTemp();
       MarkSystemConstantUsed(SystemConstants::Index::kTextureSwizzledSigns);
       a_.OpUBFE(dxbc::Dest::R(signs_temp, used_result_nonzero_components), dxbc::Src::LU(2),
@@ -1273,13 +1278,17 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
         sampler = dxbc::Src::S(0, dxbc::Index(coord_and_sampler_temp, 3));
       }
 
-      a_.OpMov(dxbc::Dest::R(system_temp_result_, used_result_nonzero_components),
-               dxbc::Src::LF(0.0f));
+      u32 is_signed_temp = UINT32_MAX;
+      if (!textures_unsigned) {
+        // The textures are sampled conditionally: break the result register dependencies.
+        a_.OpMov(dxbc::Dest::R(system_temp_result_, used_result_nonzero_components),
+                 dxbc::Src::LF(0.0f));
 
-      u32 is_signed_temp = PushSystemTemp();
-      a_.OpIEq(dxbc::Dest::R(is_signed_temp, used_result_nonzero_components),
-               dxbc::Src::R(signs_temp),
-               dxbc::Src::LU(std::to_underlying(xenos::TextureSign::kSigned)));
+        is_signed_temp = PushSystemTemp();
+        a_.OpIEq(dxbc::Dest::R(is_signed_temp, used_result_nonzero_components),
+                 dxbc::Src::R(signs_temp),
+                 dxbc::Src::LU(std::to_underlying(xenos::TextureSign::kSigned)));
+      }
 
       dxbc::Src layer_lerp_factor_src(dxbc::Src::LF(0.0f));
       u32 srv_selection_temp = bindless_resources_used_ ? PushSystemTemp() : UINT32_MAX;
@@ -1375,9 +1384,13 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
       }
       u32 result_first_component;
       rex::bit_scan_forward(used_result_nonzero_components, &result_first_component);
-      dxbc::Src is_all_signed_src(dxbc::Src::R(is_signed_temp).Select(result_first_component));
-      dxbc::Src is_any_signed_src(dxbc::Src::R(is_signed_temp).Select(result_first_component));
-      if (used_result_nonzero_components != (1 << result_first_component)) {
+      dxbc::Src is_all_signed_src(dxbc::Src::LU(0));
+      dxbc::Src is_any_signed_src(dxbc::Src::LU(0));
+      if (!textures_unsigned) {
+        is_all_signed_src = dxbc::Src::R(is_signed_temp).Select(result_first_component);
+        is_any_signed_src = is_all_signed_src;
+      }
+      if (!textures_unsigned && used_result_nonzero_components != (1 << result_first_component)) {
         if (srv_selection_temp == UINT32_MAX) {
           srv_selection_temp = PushSystemTemp();
         }
@@ -1418,6 +1431,8 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
         }
         u32 texture_binding_index_unsigned =
             FindOrAddTextureBinding(tfetch_index, srv_dimension, false);
+        // Added even when it is not sampled: a shader keeps the bindings of its first
+        // translation, so every modification must declare the same ones.
         u32 texture_binding_index_signed =
             FindOrAddTextureBinding(tfetch_index, srv_dimension, true);
         const TextureBinding& texture_binding_unsigned =
@@ -1464,7 +1479,9 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
             a_.OpAdd(dxbc::Dest::R(coord_and_sampler_temp, 0b0100),
                      dxbc::Src::R(coord_and_sampler_temp, dxbc::Src::kZZZZ), dxbc::Src::LF(1.0f));
           }
-          a_.OpIf(false, is_all_signed_src);
+          if (!textures_unsigned) {
+            a_.OpIf(false, is_all_signed_src);
+          }
           {
             if (bindless_resources_used_) {
               REX_ASSERT(srv_selection_temp != UINT32_MAX);
@@ -1493,9 +1510,9 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
                            dxbc::Src::R(coord_and_sampler_temp), 3, srv_unsigned, sampler, lod_src);
             }
           }
-          a_.OpEndIf();
-          a_.OpIf(true, is_any_signed_src);
-          {
+          if (!textures_unsigned) {
+            a_.OpEndIf();
+            a_.OpIf(true, is_any_signed_src);
             u32 signed_temp = PushSystemTemp();
             if (bindless_resources_used_) {
               REX_ASSERT(srv_selection_temp != UINT32_MAX);
@@ -1527,8 +1544,8 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
                       dxbc::Src::R(is_signed_temp), dxbc::Src::R(signed_temp),
                       dxbc::Src::R(layer_value_temp));
             PopSystemTemp();
+            a_.OpEndIf();
           }
-          a_.OpEndIf();
           if (layer) {
             REX_ASSERT(layer_value_temp != system_temp_result_);
             a_.OpAdd(dxbc::Dest::R(layer_value_temp, used_result_nonzero_components),
@@ -1548,7 +1565,9 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
       if (srv_selection_temp != UINT32_MAX) {
         PopSystemTemp();
       }
-      PopSystemTemp();
+      if (is_signed_temp != UINT32_MAX) {
+        PopSystemTemp();
+      }
 
       if (grad_v_temp != UINT32_MAX) {
         PopSystemTemp();
@@ -1561,7 +1580,7 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
     PopSystemTemp();
 
     // Gamma is applied after filtering as host sampler filtering is outside translator control.
-    if (instr.opcode == FetchOpcode::kTextureFetch) {
+    if (instr.opcode == FetchOpcode::kTextureFetch && !textures_unsigned) {
       REX_ASSERT(signs_temp != UINT32_MAX);
       for (u32 i = 0; i < 4; ++i) {
         if (!(used_result_nonzero_components & (1 << i))) {
@@ -1591,7 +1610,7 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
     PopSystemTemp();
   }
 
-  if (instr.opcode == FetchOpcode::kTextureFetch) {
+  if (instr.opcode == FetchOpcode::kTextureFetch && !textures_unsigned) {
     u32 exp_adjust_temp = PushSystemTemp();
     a_.OpIBFE(dxbc::Dest::R(exp_adjust_temp, 0b0001), dxbc::Src::LU(6), dxbc::Src::LU(13),
               RequestTextureFetchConstantWord(tfetch_index, 3));

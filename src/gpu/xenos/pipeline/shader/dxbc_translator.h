@@ -129,6 +129,12 @@ class DXBCShaderTranslator : public ShaderTranslator {
       // writes the screen space motion from this pixel to its previous position to
       // kMotionVectorRenderTarget. RTV only.
       u32 motion_vectors : 1;
+      // Every texture fetch constant the shader uses has only unsigned components after the
+      // swizzle (texture_util::SwizzleSigns is 0) and no exponent adjustment, so texture fetches
+      // sample the unsigned SRV unconditionally and skip the sign, gamma and exponent
+      // conversions. Set by a host renderer that knows the fetch constants when it creates the
+      // pipeline; nothing in the SDK sets it.
+      u32 textures_unsigned : 1;
     } pixel;
 
     explicit Modification(u64 modification_value = 0) : value(modification_value) {
