@@ -207,8 +207,8 @@ u32 ObCreateSymbolicLink_entry(GuestPtrT<X_ANSI_STRING> path_ptr,
   auto target = rex::string::utf8_canonicalize_guest_path(
       kernel::TranslateAnsiPath(kernel::GetCurrentState().GetAddressSpace(), target_ptr));
 
-  if (rex::string::utf8_starts_with(path, u8"\\??\\")) {
-    path = path.substr(4);
+  if (rex::string::utf8_starts_with(path, "\\??\\")) {
+    path = path.substr(4);  // Strip the full qualifier
   }
 
   if (auto linked = kernel::GetCurrentState().GetFileSystem()->Link(path, target);
