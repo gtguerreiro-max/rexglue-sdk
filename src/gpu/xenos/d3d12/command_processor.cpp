@@ -25,6 +25,8 @@
 #include "gpu/xenos/d3d12/d3d12_xenos_graphics_driver.h"
 #include "gpu/xenos/d3d12/shader.h"
 #include <rex/title.h>
+#include <rex/xenos/draw_hook.h>
+#include <rex/xenos/integer_fetch.h>
 #include <rex/xenos/register.h>
 #include "gpu/xenos/draw_state.h"
 #include <rex/xenos/fetch.h>
@@ -2341,7 +2343,35 @@ bool D3D12CommandProcessor::IssueDraw([[maybe_unused]] xenos::PrimitiveType prim
                              primitive_processing_result.host_shader_index_endian, viewport_info,
                              used_texture_mask, normalized_depth_control, normalized_color_mask);
 
-  if (!UpdateBindings(vertex_shader, pixel_shader, root_signature, memexport_used)) {
+  // A game's per-draw change of the pixel constants (rex/xenos/draw_hook.h): applied for the
+  // upload in UpdateBindings, then the guest's values are put back and the buffer marked stale
+  // so the next draw uploads those.
+  constexpr u32 kPixelFloatConstants =
+      std::to_underlying(xenos::Register::SHADER_CONSTANT_256_X);
+  u32 pixel_constants_saved[256 * 4];
+  bool pixel_constants_changed = false;
+  if (auto hook = rex::xenos::GetPixelConstantHook();
+      hook && pixel_shader &&
+      hook(pixel_shader->GetUcodeDataHash(), pixel_shader->GetConstantRegisterMap().float_bitmap,
+           nullptr)) {
+    u32* constants = &register_file_->values[kPixelFloatConstants];
+    std::memcpy(pixel_constants_saved, constants, sizeof(pixel_constants_saved));
+    pixel_constants_changed =
+        hook(pixel_shader->GetUcodeDataHash(),
+             pixel_shader->GetConstantRegisterMap().float_bitmap, constants);
+    if (pixel_constants_changed) {
+      cbuffer_binding_float_pixel_.up_to_date = false;
+    }
+  }
+
+  const bool bindings_updated =
+      UpdateBindings(vertex_shader, pixel_shader, root_signature, memexport_used);
+  if (pixel_constants_changed) {
+    std::memcpy(&register_file_->values[kPixelFloatConstants], pixel_constants_saved,
+                sizeof(pixel_constants_saved));
+    cbuffer_binding_float_pixel_.up_to_date = false;
+  }
+  if (!bindings_updated) {
     return false;
   }
   // Must not call anything that can change the descriptor heap from now on.
@@ -3942,6 +3972,9 @@ bool D3D12CommandProcessor::UpdateBindings(const D3D12Shader* vertex_shader,
     std::memcpy(fetch_constants,
                 &regs[std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_00_0)],
                 kFetchConstantsSize);
+    rex::xenos::AdjustIntegerTextureFetchConstants(
+        reinterpret_cast<u32*>(fetch_constants),
+        &regs[std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_00_0)]);
     cbuffer_binding_fetch_.up_to_date = true;
     current_graphics_root_up_to_date_ &= ~(1u << root_parameter_fetch_constants);
   }

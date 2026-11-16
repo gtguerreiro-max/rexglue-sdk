@@ -95,6 +95,17 @@ void RtlRaiseException_entry(GuestPtrT<X_EXCEPTION_RECORD> record) {
       break;
   }
 
+  // Name the exception first: without guest unwinding the break ends the process, and the
+  // code and parameters are all that says why (STATUS_NO_MEMORY from a heap gives the size).
+  REXKRNL_ERROR(
+      "RtlRaiseException: code {:08X} flags {:08X} address {:08X}, {} parameters "
+      "{:08X} {:08X} {:08X} {:08X}",
+      static_cast<u32>(record->code), static_cast<u32>(record->exception_flags),
+      static_cast<u32>(record->exception_address), static_cast<u32>(record->number_parameters),
+      static_cast<u32>(record->exception_information[0]),
+      static_cast<u32>(record->exception_information[1]),
+      static_cast<u32>(record->exception_information[2]),
+      static_cast<u32>(record->exception_information[3]));
   rex::platform::Break();
 }
 

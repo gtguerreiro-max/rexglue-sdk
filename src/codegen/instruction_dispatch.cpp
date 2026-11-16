@@ -428,6 +428,7 @@ static const std::unordered_map<int, Builder>& GetDispatchTable() {
       {PPC_INST_VMAXUB, Build<PPC_INST_VMAXUB>},
       {PPC_INST_VMINUB, Build<PPC_INST_VMINUB>},
       {PPC_INST_VMINUW, Build<PPC_INST_VMINUW>},
+      {PPC_INST_VMAXUW, Build<PPC_INST_VMAXUW>},
 
       {PPC_INST_VAVGSB, Build<PPC_INST_VAVGSB>},
       {PPC_INST_VAVGSH, Build<PPC_INST_VAVGSH>},

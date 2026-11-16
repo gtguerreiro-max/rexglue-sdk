@@ -29,6 +29,7 @@ target_sources(
           process_control.cpp
           driver_context.cpp
           driver_select.cpp
+          draw_hook.cpp
           platform/file.cpp
           process_lifecycle.cpp
           ring_buffer.cpp

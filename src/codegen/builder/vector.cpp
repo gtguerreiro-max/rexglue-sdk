@@ -453,6 +453,13 @@ bool Build<PPC_INST_VMINUW>(BuilderContext& ctx) {
   return true;
 }
 
+// From Dust's water simulation (GalileoSimulatorWater, 74 uses) clamps with it.
+template <>
+bool Build<PPC_INST_VMAXUW>(BuilderContext& ctx) {
+  ctx.EmitVecIntBinary("max_epu32", "u32");
+  return true;
+}
+
 template <>
 bool Build<PPC_INST_VSUBSBS>(BuilderContext& ctx) {
   EmitSaturation(ctx, "IsSubSaturating<8, true>");

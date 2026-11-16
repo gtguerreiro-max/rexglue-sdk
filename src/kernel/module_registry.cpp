@@ -480,7 +480,8 @@ Result<X_HANDLE> ModuleRegistry::LoadUserModule(std::string_view raw_name, bool 
               xex->GetBaseAddress() + xex->GetImageSize());
         } else if (!StateOf(runtime_).GetFunctionDispatcher()->InitializeFunctionTable(
                        image_info->code_base, image_info->code_size, image_info->image_base,
-                       image_info->image_size)) {
+                       image_info->image_size, /*is_entrypoint=*/false,
+                       image_info->function_table_base)) {
           REXSYS_ERROR("InitializeFunctionTable failed for module '{}'", recomp->pe_name);
         } else {
           StateOf(runtime_).GetFunctionDispatcher()->RegisterModule(
@@ -623,6 +624,16 @@ std::optional<ModuleRegistry::RecompiledModule> ModuleRegistry::FindRecompiledMo
   auto normalized = rex::string::NormalizeGuestPath(guest_path);
   for (const auto& info : recompiled_modules_) {
     if (info.guest_path == normalized) {
+      return info;
+    }
+  }
+  // A title launched from a device path (an XBLA title on \Device\Harddisk0\Partition1, as
+  // From Dust is) loads its DLLs relative to that path, which keeps the device prefix that the
+  // manifest's guest paths lack. Match those by their path below the mount.
+  for (const auto& info : recompiled_modules_) {
+    if (normalized.size() > info.guest_path.size() && normalized.ends_with(info.guest_path) &&
+        normalized[normalized.size() - info.guest_path.size() - 1] == '/' &&
+        normalized.starts_with("device/")) {
       return info;
     }
   }

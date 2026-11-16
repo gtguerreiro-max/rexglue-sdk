@@ -3428,6 +3428,14 @@ VkShaderModule VulkanRenderTargetCache::GetTransferShader(TransferShaderKey key)
         }
       }
     }
+    // For stencil bit output, use stencil directly for the discard check (as in Xenia: when the
+    // depth comes from the host depth copy, nothing above packs it, and without this no bit was
+    // ever discarded, so every stencil bit was set, 0xFF, which a later depth to color transfer
+    // turned into R = 1.0 in From Dust's scene).
+    if (packed == spv::NoResult && mode.output == TransferOutput::kStencilBit &&
+        source_stencil[0] != spv::NoResult) {
+      packed = source_stencil[0];
+    }
     switch (mode.output) {
       case TransferOutput::kColor: {
         if (packed != spv::NoResult) {

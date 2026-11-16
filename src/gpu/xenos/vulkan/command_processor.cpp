@@ -35,6 +35,8 @@
 #include "gpu/xenos/pipeline/shader/shader.h"
 #include "gpu/xenos/pipeline/shader/spirv_translator.h"
 #include <rex/title.h>
+#include <rex/xenos/draw_hook.h>
+#include <rex/xenos/integer_fetch.h>
 #include <rex/xenos/register.h>
 #include "gpu/xenos/vulkan/command_processor.h"
 #include "gpu/xenos/physical_memory.h"
@@ -3726,8 +3728,37 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, u32 index
                              shader_32bit_index_dma, 0, viewport_info, used_texture_mask,
                              normalized_depth_control, normalized_color_mask);
 
+  // A game's per-draw change of the pixel constants (rex/xenos/draw_hook.h): applied for the
+  // upload in UpdateBindings, then the guest's values are put back and the buffer marked stale
+  // so the next draw uploads those (as in the D3D12 driver).
+  constexpr u32 kPixelFloatConstants =
+      std::to_underlying(xenos::Register::SHADER_CONSTANT_256_X);
+  u32 pixel_constants_saved[256 * 4];
+  bool pixel_constants_changed = false;
+  if (auto hook = rex::xenos::GetPixelConstantHook();
+      hook && pixel_shader &&
+      hook(pixel_shader->GetUcodeDataHash(), pixel_shader->GetConstantRegisterMap().float_bitmap,
+           nullptr)) {
+    u32* constants = &register_file_->values[kPixelFloatConstants];
+    std::memcpy(pixel_constants_saved, constants, sizeof(pixel_constants_saved));
+    pixel_constants_changed =
+        hook(pixel_shader->GetUcodeDataHash(),
+             pixel_shader->GetConstantRegisterMap().float_bitmap, constants);
+    if (pixel_constants_changed) {
+      current_constant_buffers_up_to_date_ &=
+          ~(UINT32_C(1) << SPIRVShaderTranslator::kConstantBufferFloatPixel);
+    }
+  }
+
   // Uniform buffers and descriptor sets update after binding the pipeline with the new layout.
-  if (!UpdateBindings(vertex_shader, pixel_shader)) {
+  const bool bindings_updated = UpdateBindings(vertex_shader, pixel_shader);
+  if (pixel_constants_changed) {
+    std::memcpy(&register_file_->values[kPixelFloatConstants], pixel_constants_saved,
+                sizeof(pixel_constants_saved));
+    current_constant_buffers_up_to_date_ &=
+        ~(UINT32_C(1) << SPIRVShaderTranslator::kConstantBufferFloatPixel);
+  }
+  if (!bindings_updated) {
     return draw_fail("update_bindings");
   }
 
@@ -6129,6 +6160,9 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       buffer_info.range = static_cast<VkDeviceSize>(kFetchConstantsSize);
       std::memcpy(mapping, &regs[std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_00_0)],
                   kFetchConstantsSize);
+      rex::xenos::AdjustIntegerTextureFetchConstants(
+          reinterpret_cast<u32*>(mapping),
+          &regs[std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_00_0)]);
       current_constant_buffers_up_to_date_ |= UINT32_C(1)
                                               << SPIRVShaderTranslator::kConstantBufferFetch;
     }
