@@ -171,10 +171,6 @@ Result<Opened> FileSystem::OpenFrom(Node* root, std::string_view requested,
     }
     if (auto resolved = ResolveNode(path)) {
       node = *resolved;
-    } else if (CodeOf(resolved.error()) == FileSystemError::kNoMount) {
-      // A device nothing is mounted at (cache: before a title mounts it) stays kNoMount, not a
-      // missing file: the kernel answers it as Xenia does (NtCreateFile).
-      return Err<Opened>(resolved.error());
     }
   }
 
