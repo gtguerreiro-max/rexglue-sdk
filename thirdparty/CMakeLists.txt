@@ -595,7 +595,7 @@ add_library(
   ${FFMPEG_DIR}/libavcodec/mdct_fixed_32.c
   ${FFMPEG_DIR}/libavcodec/sinewin.c
   ${FFMPEG_DIR}/libavcodec/wma_freqs.c
-  ${FFMPEG_DIR}/libavcodec/wmaprodec.c
+  ${FFMPEG_OVERLAY_SRC_DIR}/wmaprodec_xmaframes.c
   ${FFMPEG_DIR}/libavcodec/wmadec.c
   ${FFMPEG_DIR}/libavcodec/wma.c
   ${FFMPEG_DIR}/libavcodec/wma_common.c

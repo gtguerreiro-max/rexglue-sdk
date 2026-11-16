@@ -172,9 +172,13 @@ void XMAContext::ClearLocked(XMA_CONTEXT_DATA* data) {
 }
 
 void XMAContext::ResetDecoderState() {
-  if (av_context_) {
-    av_context_->sample_rate = 0;
-    av_context_->channels = 0;
+  // A freed or cleared context is a new stream, so the previous wave's overlap-add tail must not
+  // reach its first frame. The xmaframes flush (thirdparty/ffmpeg-overlay/wmaprodec_xmaframes.c)
+  // returns the decoder to its just-opened state; reopening it would also zero the ~450 KB
+  // decoder context and rebuild the MDCT tables, and titles recycle contexts dozens of times a
+  // second.
+  if (av_context_ && avcodec_is_open(av_context_)) {
+    avcodec_flush_buffers(av_context_);
   }
   raw_frame_.fill(0);
   decoded_frame_.fill(0);
