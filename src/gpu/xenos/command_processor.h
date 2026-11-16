@@ -153,6 +153,12 @@ class REX_GPU_XENOS_API CommandProcessor : public rex::NonCopyable {
 
   void ExecutePacket(u32 ptr, u32 count);
 
+  // The display gamma ramps as the guest's DC_LUT register writes left them, for presenters
+  // outside the backend (ReXNative). Written on the command processor thread.
+  const xenos::reg::DC_LUT_30_COLOR* GetGammaRamp256EntryTable() const {
+    return gamma_ramp_256_entry_table_;
+  }
+  const xenos::reg::DC_LUT_PWL_DATA* GetGammaRampPWLRGB() const { return gamma_ramp_pwl_rgb_[0]; }
  protected:
   /** Value in an occlusion query result that marks it finished. */
   static constexpr u32 kQueryFinished = std::byteswap(0xFFFFFEEDu);
@@ -250,10 +256,6 @@ class REX_GPU_XENOS_API CommandProcessor : public rex::NonCopyable {
   void WriteLoopRangeFromMem(u32 start_index, u32* base, u32 num_registers);
   void WriteRegisterBlockRangeFromMem(u32 start_index, u32* base, u32 num_registers);
 
-  const xenos::reg::DC_LUT_30_COLOR* GetGammaRamp256EntryTable() const {
-    return gamma_ramp_256_entry_table_;
-  }
-  const xenos::reg::DC_LUT_PWL_DATA* GetGammaRampPWLRGB() const { return gamma_ramp_pwl_rgb_[0]; }
   virtual void OnGammaRamp256EntryTableValueWritten() {}
   virtual void OnGammaRampPWLValueWritten() {}
 
