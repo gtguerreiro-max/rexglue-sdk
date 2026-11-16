@@ -154,6 +154,13 @@ u32 NtCreateFile_entry(MappedU32 handle_out, u32 desired_access,
     if (filesystem::CodeOf(opened.error()) == filesystem::FileSystemError::kExists) {
       file_action = filesystem::OpenAction::kExists;
     }
+    // A path on a device with no mount: X_STATUS_NO_SUCH_FILE, as Xenia and ReXGlue v0.10 answer.
+    // The XDK's cache partition code linked into titles opens cache:\ before anything mounts it
+    // and handles that status; on OBJECT_NAME_NOT_FOUND Bionic Commando Rearmed went on with a
+    // null pointer and crashed at start-up.
+    if (filesystem::CodeOf(opened.error()) == filesystem::FileSystemError::kNoMount) {
+      result = X_STATUS_NO_SUCH_FILE;
+    }
   }
   X_HANDLE handle = kXInvalidHandleValue;
   if (XSUCCEEDED(result)) {
