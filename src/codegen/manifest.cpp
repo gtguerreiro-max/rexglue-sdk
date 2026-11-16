@@ -236,6 +236,10 @@ bool ManifestConfig::WriteSDKVersionStamp(const std::filesystem::path& path,
   }
 
   if (stamp_idx) {
+    // Rewriting an unchanged manifest would make it newer than the codegen output, and a build
+    // that runs codegen on a stale manifest would then regenerate everything on every build.
+    if (lines[*stamp_idx] == stamp_line)
+      return true;
     lines[*stamp_idx] = stamp_line;
   } else if (project_header_idx) {
     lines.insert(std::next(lines.begin(), static_cast<std::ptrdiff_t>(*project_header_idx + 1)),
