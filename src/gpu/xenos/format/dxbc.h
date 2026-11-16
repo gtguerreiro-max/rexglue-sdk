@@ -1264,6 +1264,7 @@ enum class Opcode : u8 {
   kRSq = 68,
   kSampleL = 72,
   kSampleD = 73,
+  kSampleB = 74,
   kSqRt = 75,
   kSwitch = 76,
   kSinCos = 77,
@@ -1674,27 +1675,17 @@ class Assembler {
   void OpSampleL(const Dest& dest, const Src& address, u32 address_components, const Src& resource,
                  const Src& sampler, const Src& lod, i32 aoffimmi_u = 0, i32 aoffimmi_v = 0,
                  i32 aoffimmi_w = 0) {
-    u32 dest_write_mask = dest.GetMask();
-    u32 sample_controls = 0;
-    if (aoffimmi_u || aoffimmi_v || aoffimmi_w) {
-      sample_controls = SampleControlsExtendedOpcodeToken(aoffimmi_u, aoffimmi_v, aoffimmi_w);
-    }
-    u32 address_mask = (1 << address_components) - 1;
-    u32 operands_length = dest.GetLength() + address.GetLength(address_mask) +
-                          resource.GetLength(dest_write_mask, true) + sampler.GetLength(0b0000) +
-                          lod.GetLength(0b0000);
-    code_.reserve(code_.size() + 1 + (sample_controls ? 1 : 0) + operands_length);
-    code_.push_back(OpcodeToken(Opcode::kSampleL, operands_length, false, sample_controls ? 1 : 0));
-    if (sample_controls) {
-      code_.push_back(sample_controls);
-    }
-    dest.Write(code_);
-    address.Write(code_, false, address_mask);
-    resource.Write(code_, false, dest_write_mask, true);
-    sampler.Write(code_, false, 0b0000);
-    lod.Write(code_, false, 0b0000);
-    ++stat_.instruction_count;
+    EmitSampleScalarOp(Opcode::kSampleL, dest, address, address_components, resource, sampler, lod,
+                       aoffimmi_u, aoffimmi_v, aoffimmi_w);
     ++stat_.texture_normal_instruction_count;
+  }
+  /** Emits a sample with implicit (screen-space) derivatives and a LOD bias, pixel shaders only. */
+  void OpSampleB(const Dest& dest, const Src& address, u32 address_components, const Src& resource,
+                 const Src& sampler, const Src& bias, i32 aoffimmi_u = 0, i32 aoffimmi_v = 0,
+                 i32 aoffimmi_w = 0) {
+    EmitSampleScalarOp(Opcode::kSampleB, dest, address, address_components, resource, sampler,
+                       bias, aoffimmi_u, aoffimmi_v, aoffimmi_w);
+    ++stat_.texture_bias_instructions;
   }
   /** Emits a sample with explicit derivatives, which have as many components as the address. */
   void OpSampleD(const Dest& dest, const Src& address, u32 address_components, const Src& resource,
@@ -2189,6 +2180,31 @@ class Assembler {
   }
 
  private:
+  /** sample_l and sample_b: the sample operands, then one scalar (the LOD or the bias). */
+  void EmitSampleScalarOp(Opcode opcode, const Dest& dest, const Src& address,
+                          u32 address_components, const Src& resource, const Src& sampler,
+                          const Src& scalar, i32 aoffimmi_u, i32 aoffimmi_v, i32 aoffimmi_w) {
+    u32 dest_write_mask = dest.GetMask();
+    u32 sample_controls = 0;
+    if (aoffimmi_u || aoffimmi_v || aoffimmi_w) {
+      sample_controls = SampleControlsExtendedOpcodeToken(aoffimmi_u, aoffimmi_v, aoffimmi_w);
+    }
+    u32 address_mask = (1 << address_components) - 1;
+    u32 operands_length = dest.GetLength() + address.GetLength(address_mask) +
+                          resource.GetLength(dest_write_mask, true) + sampler.GetLength(0b0000) +
+                          scalar.GetLength(0b0000);
+    code_.reserve(code_.size() + 1 + (sample_controls ? 1 : 0) + operands_length);
+    code_.push_back(OpcodeToken(opcode, operands_length, false, sample_controls ? 1 : 0));
+    if (sample_controls) {
+      code_.push_back(sample_controls);
+    }
+    dest.Write(code_);
+    address.Write(code_, false, address_mask);
+    resource.Write(code_, false, dest_write_mask, true);
+    sampler.Write(code_, false, 0b0000);
+    scalar.Write(code_, false, 0b0000);
+    ++stat_.instruction_count;
+  }
   void EmitAluOp(Opcode opcode, u32 src_are_integer, const Dest& dest, const Src& src,
                  bool saturate = false) {
     u32 dest_write_mask = dest.GetMask();

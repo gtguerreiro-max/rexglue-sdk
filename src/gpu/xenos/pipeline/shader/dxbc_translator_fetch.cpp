@@ -1160,6 +1160,11 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
       u32 grad_component_count = 0;
       u32 grad_h_lod_temp = UINT32_MAX;
       u32 grad_v_temp = UINT32_MAX;
+      // Computed LOD from screen-space gradients in a pixel shader: sample_b with the LOD bias is
+      // what sample_d with the gradients scaled by 2^bias computes, without the derivative
+      // instructions and the gradient operands. Stacked textures keep the gradients, which the
+      // layer filter choice below reads.
+      bool implicit_gradients = false;
       if (instr.attributes.mip_filter != xenos::TextureFilter::kBaseMap) {
         grad_h_lod_temp = PushSystemTemp();
         lod_src = dxbc::Src::R(grad_h_lod_temp, dxbc::Src::kWWWW);
@@ -1183,7 +1188,10 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
             a_.OpMul(lod_dest, lod_src, dxbc::Src::LF(1.0f / 32.0f));
           }
         }
-        if (use_computed_lod) {
+        implicit_gradients = use_computed_lod && IsPixelShader() &&
+                             !instr.attributes.use_register_gradients &&
+                             instr.dimension != xenos::FetchOpDimension::k3DOrStacked;
+        if (use_computed_lod && !implicit_gradients) {
           grad_v_temp = PushSystemTemp();
           switch (instr.dimension) {
             case xenos::FetchOpDimension::k1D:
@@ -1477,6 +1485,9 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
                            dxbc::Src::R(coord_and_sampler_temp), 3, srv_unsigned, sampler,
                            dxbc::Src::R(grad_h_lod_temp), dxbc::Src::R(grad_v_temp),
                            srv_grad_component_count);
+            } else if (implicit_gradients) {
+              a_.OpSampleB(dxbc::Dest::R(layer_value_temp, used_result_nonzero_components),
+                           dxbc::Src::R(coord_and_sampler_temp), 3, srv_unsigned, sampler, lod_src);
             } else {
               a_.OpSampleL(dxbc::Dest::R(layer_value_temp, used_result_nonzero_components),
                            dxbc::Src::R(coord_and_sampler_temp), 3, srv_unsigned, sampler, lod_src);
@@ -1505,6 +1516,9 @@ void DXBCShaderTranslator::ProcessTextureFetchInstruction(
                            dxbc::Src::R(coord_and_sampler_temp), 3, srv_signed, sampler,
                            dxbc::Src::R(grad_h_lod_temp), dxbc::Src::R(grad_v_temp),
                            srv_grad_component_count);
+            } else if (implicit_gradients) {
+              a_.OpSampleB(dxbc::Dest::R(signed_temp, used_result_nonzero_components),
+                           dxbc::Src::R(coord_and_sampler_temp), 3, srv_signed, sampler, lod_src);
             } else {
               a_.OpSampleL(dxbc::Dest::R(signed_temp, used_result_nonzero_components),
                            dxbc::Src::R(coord_and_sampler_temp), 3, srv_signed, sampler, lod_src);
