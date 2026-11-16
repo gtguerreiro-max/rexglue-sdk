@@ -1312,7 +1312,8 @@ bool CommandProcessor::ExecutePacketType3Draw(memory::RingBuffer* reader,
 
   if (draw_succeeded) {
     auto viz_query = register_file_->Get<xenos::reg::PA_SC_VIZ_QUERY>();
-    if (!(viz_query.viz_query_ena && viz_query.kill_pix_post_hi_z)) {
+    if (!(viz_query.viz_query_ena && viz_query.kill_pix_post_hi_z) &&
+        !GetXenosSettings().skip_draws.Get()) {
       bool major_mode_explicit =
           xenos::IsMajorModeExplicit(vgt_draw_initiator.major_mode, vgt_draw_initiator.prim_type);
       draw_succeeded = IssueDraw(vgt_draw_initiator.prim_type, vgt_draw_initiator.num_indices,
@@ -1454,6 +1455,12 @@ bool CommandProcessor::ExecutePacketType3_IM_LOAD(memory::RingBuffer* reader,
   u32 size_dwords = start_size & 0xFFFF;
   REX_ASSERT(start == 0);
 
+  // With skip_draws the active shaders stay as they were; after it is turned off, draws use them
+  // until the title loads the next shader of each type.
+  if (GetXenosSettings().skip_draws.Get()) {
+    return true;
+  }
+
   const u32* shader_ucode =
       GetPhysicalForRead<u32>(physical_memory_, addr, size_dwords * sizeof(u32));
   if (!shader_ucode) {
@@ -1488,6 +1495,10 @@ bool CommandProcessor::ExecutePacketType3_IM_LOAD_IMMEDIATE(memory::RingBuffer* 
   REX_ASSERT(start == 0);
   REX_ASSERT(reader->GetReadCount() >= size_dwords * 4);
   REX_ASSERT(count - 2 >= size_dwords);
+  if (GetXenosSettings().skip_draws.Get()) {
+    reader->AdvanceRead(size_dwords * sizeof(u32));
+    return true;
+  }
   auto shader = LoadShader(shader_type, static_cast<u32>(reader->GetReadPtr()),
                            reinterpret_cast<u32*>(reader->GetBuffer() + reader->GetReadOffset()),
                            size_dwords);

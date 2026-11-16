@@ -142,7 +142,8 @@ void D3D12CommandProcessor::InitializeShaderStorage(const std::filesystem::path&
 
 bool D3D12CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffer* reader,
                                                                u32 packet, u32 count) {
-  if (!GetXenosSettings().occlusion_query_enable.Get() || !occlusion_query_resources_available_) {
+  if (!GetXenosSettings().occlusion_query_enable.Get() || !occlusion_query_resources_available_ ||
+      GetXenosSettings().skip_draws.Get()) {
     return CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(reader, packet, count);
   }
 
@@ -1805,6 +1806,12 @@ void D3D12CommandProcessor::IssueSwap([[maybe_unused]] u32 frontbuffer_ptr, u32 
 
   if (!BeginSubmission(true)) {
     REXGPU_ERROR("IssueSwap: BeginSubmission failed");
+    return;
+  }
+  // Nothing to present with skip_draws, but the frame still ends here so its per-frame resources
+  // are released.
+  if (GetXenosSettings().skip_draws.Get()) {
+    EndSubmission(true);
     return;
   }
 
