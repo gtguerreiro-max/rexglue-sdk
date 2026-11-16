@@ -350,6 +350,15 @@ class REX_KERNEL_API BaseHeap {
   bool SyncHostPageAccess(u32 start_page_number, u32 end_page_number);
 
   /**
+   * rex::memory::AllocFixed for the heap's host pages. Guest physical memory is committed with its
+   * section (GuestAddressSpace::Initialize), so there a commit only sets the protection.
+   *
+   * @return True on success.
+   */
+  bool AllocHostPages(void* host_address, size_t length, rex::memory::AllocationType type,
+                      rex::memory::PageAccess access);
+
+  /**
    * Takes the memory watch lock for operations that reconcile host page access.
    *
    * @return The held lock, or an empty lock when guest pages are at least host page sized.
@@ -819,6 +828,8 @@ class REX_KERNEL_API GuestAddressSpace : public ISystemHeap {
   int MapViews(u8* mapping_base);
   void UnmapViews();
   bool ReserveMMIOBlocks() const;
+  /** The section and offset view n maps: guest physical memory has a section of its own. */
+  std::pair<rex::memory::FileMappingHandle, u64> ViewSource(size_t n) const;
 
   bool AccessViolationCallback(void* host_address, bool is_write);
 
@@ -851,6 +862,8 @@ class REX_KERNEL_API GuestAddressSpace : public ISystemHeap {
   mutable std::mutex function_tables_mutex_;
 
   rex::memory::FileMappingHandle mapping_ = rex::memory::kFileMappingHandleInvalid;
+  std::filesystem::path physical_file_name_;
+  rex::memory::FileMappingHandle physical_mapping_ = rex::memory::kFileMappingHandleInvalid;
   u8* mapping_base_ = nullptr;
   union {
     struct {

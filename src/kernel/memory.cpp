@@ -188,6 +188,10 @@ GuestAddressSpace::GuestAddressSpace() {
   platform::SetCrashAddressDescriber(DescribeCrashAddress);
 }
 
+// Where guest physical memory starts in the views' target addresses (kViewRanges): it has a
+// section of its own (physical_mapping_), committed when it is created.
+constexpr u64 kPhysicalTargetBase = 0x100000000ull;
+
 GuestAddressSpace::~GuestAddressSpace() {
   REX_ASSERT(g_active_memory.load() == this);
   platform::SetCrashAddressDescriber(nullptr);
@@ -216,6 +220,10 @@ GuestAddressSpace::~GuestAddressSpace() {
     mapping_base_ = nullptr;
     mapping_ = rex::memory::kFileMappingHandleInvalid;
   }
+  if (physical_mapping_ != rex::memory::kFileMappingHandleInvalid) {
+    rex::memory::CloseFileMappingHandle(physical_mapping_, physical_file_name_);
+    physical_mapping_ = rex::memory::kFileMappingHandleInvalid;
+  }
 
   virtual_membase_ = nullptr;
   physical_membase_ = nullptr;
@@ -231,14 +239,29 @@ bool GuestAddressSpace::Initialize() {
   }
   rex::memory::RemoveStaleFileMappings(kFileMappingPrefix);
   file_name_ = rex::memory::CreateFileMappingName(kFileMappingPrefix);
+  physical_file_name_ = file_name_.string() + "_physical";
 
-  const size_t mapping_size =
-      rex::RoundUpNonZero(static_cast<size_t>(0x120000000ull) + system_allocation_granularity_,
-                          static_cast<size_t>(system_allocation_granularity_));
-  mapping_ = rex::memory::CreateFileMappingHandle(file_name_, mapping_size,
+  // Guest virtual memory: reserved but uncommitted (so it does not grow the page file); the heaps
+  // commit it on demand.
+  mapping_ = rex::memory::CreateFileMappingHandle(file_name_, kPhysicalTargetBase,
                                                   rex::memory::PageAccess::kReadWrite, false);
   if (mapping_ == rex::memory::kFileMappingHandleInvalid) {
     REXSYS_ERROR("Unable to reserve the 4gb guest address space.");
+    REX_ASSERT_ALWAYS();
+    return false;
+  }
+  // Guest physical memory, a section of its own committed when it is created, so the GPU never
+  // page faults on it, and so that changing the protection of its pages, which the GPU's write
+  // watches do thousands of times a second, is a plain call: under Wine a protection change on
+  // a view of a section that commits on demand goes through wineserver, 5 to 7 times the cost.
+  // Rounded up to the allocation granularity for the 0xE0000000 view's 4 KB offset.
+  const size_t physical_mapping_size =
+      rex::RoundUpNonZero(static_cast<size_t>(0x20000000) + system_allocation_granularity_,
+                          static_cast<size_t>(system_allocation_granularity_));
+  physical_mapping_ = rex::memory::CreateFileMappingHandle(
+      physical_file_name_, physical_mapping_size, rex::memory::PageAccess::kReadWrite, true);
+  if (physical_mapping_ == rex::memory::kFileMappingHandleInvalid) {
+    REXSYS_ERROR("Unable to commit the 512mb guest physical memory.");
     REX_ASSERT_ALWAYS();
     return false;
   }
@@ -302,10 +325,8 @@ bool GuestAddressSpace::Initialize() {
                               kernel::kMemoryAllocationReserve | kernel::kMemoryAllocationCommit,
                               kernel::kMemoryProtectRead | kernel::kMemoryProtectWrite);
 
-  // Precommit the physical range so the GPU never page faults on it.
-  rex::memory::AllocFixed(heaps_.physical.TranslateRelative(0), heaps_.physical.GetHeapSize(),
-                          rex::memory::AllocationType::kCommit,
-                          rex::memory::PageAccess::kReadWrite);
+  // The physical range is committed with its section (physical_mapping_): the GPU never page
+  // faults on it.
 
   if (!ReserveMMIOBlocks()) {
     REXSYS_ERROR("Unable to reserve the MMIO register blocks");
@@ -415,10 +436,11 @@ int GuestAddressSpace::MapViewsMac() {
   for (size_t n = 0; n < rex::CountOf(kViewRanges); n++) {
     size_t view_size = static_cast<size_t>(kViewRanges[n].virtual_address_end -
                                            kViewRanges[n].virtual_address_start + 1);
-    size_t file_offset = static_cast<size_t>(kViewRanges[n].target_address & page_mask);
+    const auto [mapping, offset] = ViewSource(n);
+    size_t file_offset = static_cast<size_t>(offset & page_mask);
     void* target_address = mapping_base + kViewRanges[n].virtual_address_start;
     void* result = mmap(target_address, view_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED,
-                        mapping_, file_offset);
+                        mapping, file_offset);
     if (result == MAP_FAILED || result != target_address) {
       int err = errno;
       REXSYS_ERROR(
@@ -438,14 +460,23 @@ int GuestAddressSpace::MapViewsMac() {
 }
 #endif  // REX_PLATFORM_MAC
 
+std::pair<rex::memory::FileMappingHandle, u64> GuestAddressSpace::ViewSource(size_t n) const {
+  const u64 target = kViewRanges[n].target_address;
+  if (target >= kPhysicalTargetBase) {
+    return {physical_mapping_, target - kPhysicalTargetBase};
+  }
+  return {mapping_, target};
+}
+
 int GuestAddressSpace::MapViews(u8* mapping_base) {
   REX_ASSERT(rex::CountOf(kViewRanges) == rex::CountOf(views_.all_views));
   u64 page_mask = ~static_cast<u64>(system_page_size_ - 1);
   for (size_t n = 0; n < rex::CountOf(kViewRanges); n++) {
+    const auto [mapping, offset] = ViewSource(n);
     views_.all_views[n] = reinterpret_cast<u8*>(rex::memory::MapFileView(
-        mapping_, mapping_base + kViewRanges[n].virtual_address_start,
+        mapping, mapping_base + kViewRanges[n].virtual_address_start,
         kViewRanges[n].virtual_address_end - kViewRanges[n].virtual_address_start + 1,
-        rex::memory::PageAccess::kReadWrite, kViewRanges[n].target_address & page_mask));
+        rex::memory::PageAccess::kReadWrite, offset & page_mask));
     if (!views_.all_views[n]) {
       UnmapViews();
       return 1;
@@ -458,7 +489,7 @@ void GuestAddressSpace::UnmapViews() {
   for (size_t n = 0; n < rex::CountOf(views_.all_views); n++) {
     if (views_.all_views[n]) {
       size_t length = kViewRanges[n].virtual_address_end - kViewRanges[n].virtual_address_start + 1;
-      rex::memory::UnmapFileView(mapping_, views_.all_views[n], length);
+      rex::memory::UnmapFileView(ViewSource(n).first, views_.all_views[n], length);
     }
   }
 }
@@ -546,9 +577,10 @@ bool GuestAddressSpace::ReserveMMIOBlocks() const {
             start - (reinterpret_cast<uintptr_t>(start) & (host_page_size - 1));
         const size_t aligned_length = rex::RoundUpNonZero(
             static_cast<size_t>(start - aligned_start) + rex::ppc::kMMIOBlockSize, host_page_size);
-        return rex::memory::AllocFixed(aligned_start, aligned_length,
-                                       rex::memory::AllocationType::kCommit,
-                                       rex::memory::PageAccess::kNoAccess) != nullptr;
+        // The blocks sit in the 0x7F000000 view of guest physical memory, which is committed
+        // already: only the protection changes.
+        return rex::memory::Protect(aligned_start, aligned_length,
+                                    rex::memory::PageAccess::kNoAccess, nullptr);
       });
 }
 
@@ -1067,6 +1099,15 @@ void BaseHeap::PlotProfile() const {
   }
 }
 
+bool BaseHeap::AllocHostPages(void* host_address, size_t length,
+                              rex::memory::AllocationType type, rex::memory::PageAccess access) {
+  if (heap_type_ != HeapType::kGuestPhysical) {
+    return rex::memory::AllocFixed(host_address, length, type, access) != nullptr;
+  }
+  return type == rex::memory::AllocationType::kReserve ||
+         rex::memory::Protect(host_address, length, access, nullptr);
+}
+
 void BaseHeap::Dispose() {
   for (u32 page_number = 0; page_number < page_table_.size(); ++page_number) {
     auto& page_entry = page_table_[page_number];
@@ -1187,10 +1228,8 @@ bool BaseHeap::AllocFixedLocked(u32 base_address, u32 size, u32 alignment, u32 a
     auto alloc_type = (allocation_type & kernel::kMemoryAllocationCommit)
                           ? rex::memory::AllocationType::kCommit
                           : rex::memory::AllocationType::kReserve;
-    void* result =
-        rex::memory::AllocFixed(TranslateRelative(start_page_number << page_size_shift_),
-                                page_count << page_size_shift_, alloc_type, ToPageAccess(protect));
-    if (!result) {
+    if (!AllocHostPages(TranslateRelative(start_page_number << page_size_shift_),
+                        page_count << page_size_shift_, alloc_type, ToPageAccess(protect))) {
       memory_->ReleaseBudgetPages(title_pages);
       REXSYS_FAIL(false, "BaseHeap::AllocFixed failed to alloc range from host");
     }
@@ -1342,10 +1381,8 @@ bool BaseHeap::AllocRangeLocked(u32 low_address, u32 high_address, u32 size, u32
     auto alloc_type = (allocation_type & kernel::kMemoryAllocationCommit)
                           ? rex::memory::AllocationType::kCommit
                           : rex::memory::AllocationType::kReserve;
-    void* result =
-        rex::memory::AllocFixed(TranslateRelative(start_page_number << page_size_shift_),
-                                page_count << page_size_shift_, alloc_type, ToPageAccess(protect));
-    if (!result) {
+    if (!AllocHostPages(TranslateRelative(start_page_number << page_size_shift_),
+                        page_count << page_size_shift_, alloc_type, ToPageAccess(protect))) {
       memory_->ReleaseBudgetPages(title_pages);
       REXSYS_FAIL(false, "BaseHeap::Alloc failed to alloc range from host");
     }
