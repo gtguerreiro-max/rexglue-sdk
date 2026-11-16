@@ -1222,6 +1222,11 @@ bool CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffer* re
   u32 initiator = reader->ReadAndSwap<u32>();
   WriteRegister(std::to_underlying(xenos::Register::VGT_EVENT_INITIATOR), initiator & 0x3F);
 
+  // The reports, and the D3D's 0xFFFFFEED marking an unfinished one, are the host renderer's.
+  if (GetXenosSettings().occlusion_query_external.Get()) {
+    return true;
+  }
+
   auto fake_sample_count = GetXenosSettings().query_occlusion_fake_sample_count.Get();
   if (fake_sample_count >= 0) {
     auto* sample_counts = GetPhysicalForWrite<DepthSampleCounts>(

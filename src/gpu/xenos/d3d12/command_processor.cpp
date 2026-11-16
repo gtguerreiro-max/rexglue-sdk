@@ -143,7 +143,7 @@ void D3D12CommandProcessor::InitializeShaderStorage(const std::filesystem::path&
 bool D3D12CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffer* reader,
                                                                u32 packet, u32 count) {
   if (!GetXenosSettings().occlusion_query_enable.Get() || !occlusion_query_resources_available_ ||
-      GetXenosSettings().skip_draws.Get()) {
+      GetXenosSettings().skip_draws.Get() || GetXenosSettings().occlusion_query_external.Get()) {
     return CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(reader, packet, count);
   }
 

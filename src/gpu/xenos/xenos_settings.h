@@ -73,6 +73,9 @@ class XenosSettings : public SettingOwner {
               "Refresh the page valid state from GPU written memory at frame end. Turning it off "
               "lowers CPU cost but may break memory coherency");
   REX_SETTING(bool, occlusion_query_enable, true, "Enable host occlusion query handling");
+  REX_SETTING(bool, occlusion_query_external, false,
+              "A host renderer that draws the guest's frames itself writes the results of its "
+              "occlusion queries: EVENT_WRITE_ZPD leaves the guest's sample count reports alone");
   REX_SETTING(bool, skip_draws, false,
               "Skip all host GPU work for draws, resolves, shader loads and swaps, for a host "
               "renderer that draws the guest's frames itself (ReXNative); fences, register and "
