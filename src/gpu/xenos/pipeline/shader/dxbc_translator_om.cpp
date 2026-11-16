@@ -887,6 +887,17 @@ void DXBCShaderTranslator::CompletePixelShaderWriteToRTVs() {
              LoadSystemConstant(SystemConstants::Index::kColorExpBias,
                                 offsetof(SystemConstants, color_exp_bias) + sizeof(f32) * i,
                                 dxbc::Src::kXXXX));
+    // Clamp the color to the range of the guest's format before blending, as the ROV path does:
+    // a host target wider than the format, such as R16G16B16A16_FLOAT for 7e3, would otherwise
+    // keep values and NaNs the guest's never holds, and blending can turn an overflow to infinity
+    // into NaNs. NaNs become the low bound (max returns the other operand).
+    dxbc::Src rt_clamp_src(LoadSystemConstant(
+        SystemConstants::Index::kEDRAMRTClamp,
+        offsetof(SystemConstants, edram_rt_clamp) + sizeof(f32) * 4 * i, dxbc::Src::kXYZW));
+    a_.OpMax(dxbc::Dest::R(system_temp_color), dxbc::Src::R(system_temp_color),
+             rt_clamp_src.Swizzle(0b01000000));
+    a_.OpMin(dxbc::Dest::R(system_temp_color), dxbc::Src::R(system_temp_color),
+             rt_clamp_src.Swizzle(0b11101010));
     if (gamma_render_target_as_unorm8_) {
       a_.OpAnd(dxbc::Dest::R(gamma_temp, 0b0001), LoadFlagsSystemConstant(),
                dxbc::Src::LU(kSysFlagConvertColor0ToGamma << i));
