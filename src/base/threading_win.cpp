@@ -8,6 +8,7 @@
  *              See LICENSE file in the project root for full license text.
  */
 
+#include <atomic>
 #include <rex/platform.h>
 #include <rex/platform/thread.h>
 #include <rex/platform/sync.h>
@@ -528,7 +529,8 @@ __asm__(
 
 class Win32Thread : public Win32Handle<Thread> {
  public:
-  explicit Win32Thread(HANDLE handle) : Win32Handle(handle) {}
+  explicit Win32Thread(HANDLE handle)
+      : Win32Handle(handle), priority_(GetThreadPriority(handle)) {}
   ~Win32Thread() = default;
 
   void SetName(std::string name) override {
@@ -536,10 +538,16 @@ class Win32Thread : public Win32Handle<Thread> {
     Thread::SetName(name);
   }
 
-  i32 GetPriority() override { return GetThreadPriority(handle_); }
+  // The priority last set through this object, not GetThreadPriority: some titles query their
+  // priority every frame, and each query is a kernel call (a wineserver round trip under Wine).
+  i32 GetPriority() override { return priority_.load(std::memory_order_relaxed); }
   u32 GetSystemID() const override { return GetThreadId(handle_); }
 
-  void SetPriority(i32 new_priority) override { SetThreadPriority(handle_, new_priority); }
+  void SetPriority(i32 new_priority) override {
+    if (SetThreadPriority(handle_, new_priority)) {
+      priority_.store(new_priority, std::memory_order_relaxed);
+    }
+  }
 
   u64 GetAffinityMask() override {
     DWORD_PTR prev = SetThreadAffinityMask(handle_, 1);
@@ -655,6 +663,9 @@ class Win32Thread : public Win32Handle<Thread> {
 
  private:
   void AssertCallingThread() { REX_ASSERT(GetCurrentThreadId() == GetThreadId(handle_)); }
+
+ private:
+  std::atomic<i32> priority_;
 };
 
 thread_local std::unique_ptr<Win32Thread> g_current_thread = nullptr;
