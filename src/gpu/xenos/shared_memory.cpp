@@ -10,6 +10,7 @@
  */
 
 #include <algorithm>
+#include <span>
 #include <cstring>
 #include <memory>
 #include <utility>
@@ -325,48 +326,65 @@ bool SharedMemory::RequestRanges(const std::pair<u32, u32>* ranges, size_t count
     return true;
   }
 
+  // A single range (every vertex fetch, index buffer, memexport and resolve destination goes
+  // through RequestRange) is used in place: no list to allocate, sort or merge.
+  std::pair<u32, u32> single_range;
   std::vector<std::pair<u32, u32>> merged_ranges;
-  merged_ranges.reserve(count);
-  for (size_t i = 0; i < count; ++i) {
-    u32 start = ranges[i].first;
-    u32 length = ranges[i].second;
-    if (!length) {
-      continue;
+  std::span<const std::pair<u32, u32>> requested;
+  if (count == 1) {
+    single_range = ranges[0];
+    if (!single_range.second) {
+      return true;
     }
-    if (start > kBufferSize || (kBufferSize - start) < length) {
+    if (single_range.first > kBufferSize ||
+        (kBufferSize - single_range.first) < single_range.second) {
       return false;
     }
-    merged_ranges.emplace_back(start, length);
-  }
-  if (merged_ranges.empty()) {
-    return true;
-  }
-
-  REX_PROFILE_SCOPE("gpu");
-
-  std::sort(
-      merged_ranges.begin(), merged_ranges.end(),
-      [](const std::pair<u32, u32>& a, const std::pair<u32, u32>& b) { return a.first < b.first; });
-  size_t merged_write = 0;
-  for (size_t i = 1; i < merged_ranges.size(); ++i) {
-    std::pair<u32, u32>& range_previous = merged_ranges[merged_write];
-    const std::pair<u32, u32>& range_current = merged_ranges[i];
-    u64 previous_end =
-        static_cast<u64>(range_previous.first) + static_cast<u64>(range_previous.second);
-    u64 current_start = static_cast<u64>(range_current.first);
-    if (current_start <= previous_end) {
-      u64 current_end = current_start + static_cast<u64>(range_current.second);
-      if (current_end > previous_end) {
-        range_previous.second =
-            static_cast<u32>(current_end - static_cast<u64>(range_previous.first));
+    requested = std::span(&single_range, 1);
+  } else {
+    merged_ranges.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+      u32 start = ranges[i].first;
+      u32 length = ranges[i].second;
+      if (!length) {
+        continue;
       }
-    } else {
-      merged_ranges[++merged_write] = range_current;
+      if (start > kBufferSize || (kBufferSize - start) < length) {
+        return false;
+      }
+      merged_ranges.emplace_back(start, length);
     }
-  }
-  merged_ranges.resize(merged_write + 1);
+    if (merged_ranges.empty()) {
+      return true;
+    }
 
-  for (const std::pair<u32, u32>& range : merged_ranges) {
+    REX_PROFILE_SCOPE("gpu");
+
+    std::sort(
+        merged_ranges.begin(), merged_ranges.end(),
+        [](const std::pair<u32, u32>& a, const std::pair<u32, u32>& b) { return a.first < b.first; });
+    size_t merged_write = 0;
+    for (size_t i = 1; i < merged_ranges.size(); ++i) {
+      std::pair<u32, u32>& range_previous = merged_ranges[merged_write];
+      const std::pair<u32, u32>& range_current = merged_ranges[i];
+      u64 previous_end =
+          static_cast<u64>(range_previous.first) + static_cast<u64>(range_previous.second);
+      u64 current_start = static_cast<u64>(range_current.first);
+      if (current_start <= previous_end) {
+        u64 current_end = current_start + static_cast<u64>(range_current.second);
+        if (current_end > previous_end) {
+          range_previous.second =
+              static_cast<u32>(current_end - static_cast<u64>(range_previous.first));
+        }
+      } else {
+        merged_ranges[++merged_write] = range_current;
+      }
+    }
+    merged_ranges.resize(merged_write + 1);
+    requested = merged_ranges;
+  }
+
+  for (const std::pair<u32, u32>& range : requested) {
     if (!AllocateHostGPUMemory(range.first, range.second)) {
       return false;
     }
@@ -388,7 +406,7 @@ bool SharedMemory::RequestRanges(const std::pair<u32, u32>* ranges, size_t count
   };
   {
     auto lock = AcquireLock();
-    for (const std::pair<u32, u32>& range : merged_ranges) {
+    for (const std::pair<u32, u32>& range : requested) {
       u32 page_first = range.first >> page_size_log2_;
       u32 page_last = (range.first + range.second - 1) >> page_size_log2_;
       u32 block_first = page_first >> 6;
@@ -434,7 +452,7 @@ bool SharedMemory::RequestRanges(const std::pair<u32, u32>* ranges, size_t count
 
   REX_PROFILE_PLOT("gpu/shared_memory/request_ranges_count", static_cast<u32>(count));
   REX_PROFILE_PLOT("gpu/shared_memory/request_ranges_merged_count",
-                   static_cast<u32>(merged_ranges.size()));
+                   static_cast<u32>(requested.size()));
   REX_PROFILE_PLOT("gpu/shared_memory/request_ranges_upload_count",
                    static_cast<u32>(upload_ranges_.size()));
 
