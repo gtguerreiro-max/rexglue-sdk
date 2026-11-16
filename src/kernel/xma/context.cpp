@@ -334,6 +334,16 @@ PacketFrame XMAContext::GetPacketInfo(u8* packet, u32 frame_offset) {
 
   while (true) {
     if (stream.GetBitsRemaining() < kBitsPerFrameHeader) {
+      // This frame's 15 bit header runs into the next packet, so its size isn't readable yet.
+      // Count it anyway, or the caller takes the previous frame for the packet's last and skips
+      // straight past this one. Size 0 sends it to the split header path (pgr4-native's 0041).
+      if (stream.GetBitsRemaining() > 0) {
+        if (stream.GetOffsetBits() == frame_offset) {
+          packet_info.current_frame = packet_info.frame_count;
+          packet_info.current_frame_size = 0;
+        }
+        packet_info.frame_count++;
+      }
       break;
     }
 
