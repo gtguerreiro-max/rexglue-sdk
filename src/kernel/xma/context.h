@@ -44,9 +44,10 @@ struct XMA_CONTEXT_DATA {
 
   // DWORD 1
   u32 input_buffer_1_packet_count : 12; /**< XMASetInputBuffer1, 2KB packets, max 4095 */
-  /** XMAPlaybackSetLoop dwLoopSubframeEnd, the last loop frame plays subframes 0..end */
-  u32 loop_subframe_end : 2;
-  u32 unk_dword_1_a : 3;
+  /** XMAPlaybackSetLoop: bits 12-13 the loop's start subframe, bits 14-16 dwLoopSubframeEnd (the
+   * last loop frame plays subframes 0..end; pgr4-native's 0040: the end is read from bits 14-16) */
+  u32 loop_subframe_start : 2;
+  u32 loop_subframe_end : 3;
   /**
    * XMAPlaybackSetLoop dwLoopSubframeSkip, subframes discarded at loop start.
    * 4 means a whole warm up frame (frame aligned loops).
