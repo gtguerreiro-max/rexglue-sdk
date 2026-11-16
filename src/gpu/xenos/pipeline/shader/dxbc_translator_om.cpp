@@ -1061,6 +1061,13 @@ void DXBCShaderTranslator::CompletePixelShaderAlphaToMask() {
                                          coverage_temp_component, temp, 1);
     CompletePixelShaderAlphaToMaskSample(false, 3, 1.0f, temp_x_src, 1.0f / 16.0f, coverage_temp,
                                          coverage_temp_component, temp, 1);
+    if (!edram_rov_used_) {
+      // For a host target of 8 samples (more than the guest's 4), each threshold covers two:
+      // samples 4:7 get the coverage of 0:3. A 4-sample target ignores the bits above 3.
+      a_.OpBFI(dxbc::Dest::R(coverage_temp, 1 << coverage_temp_component), dxbc::Src::LU(4),
+               dxbc::Src::LU(4), dxbc::Src::R(coverage_temp).Select(coverage_temp_component),
+               dxbc::Src::R(coverage_temp).Select(coverage_temp_component));
+    }
     // Without ROV, native 2x maps top to 1 and bottom to 0, 2x as 4x maps top to 0, bottom to 3.
     a_.OpElse();
     CompletePixelShaderAlphaToMaskSample(true, (!edram_rov_used_ && msaa_2x_supported_) ? 1 : 0,
