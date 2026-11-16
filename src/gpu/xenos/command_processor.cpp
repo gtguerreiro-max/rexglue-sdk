@@ -26,6 +26,7 @@
 #include "gpu/xenos/command_processor.h"
 #include "gpu/xenos/xenos_graphics_driver_base.h"
 #include "gpu/xenos/physical_memory.h"
+#include <rex/xenos/draw_hook.h>
 #include <rex/xenos/texture.h>
 #include "gpu/xenos/sampler_info.h"
 #include <rex/xenos/fetch.h>
@@ -112,6 +113,11 @@ bool CommandProcessor::Initialize() {
       gamma_ramp_pwl_rgb_[i][j] = gamma_ramp_entry;
     }
   }
+  static_assert(sizeof(gamma_ramp_256_entry_table_[0]) == sizeof(u32) &&
+                sizeof(gamma_ramp_pwl_rgb_[0][0]) == sizeof(u32));
+  rex::xenos::SetGammaRampView(
+      {reinterpret_cast<const u32*>(gamma_ramp_256_entry_table_),
+       reinterpret_cast<const u32*>(gamma_ramp_pwl_rgb_)});
 
   worker_running_ = true;
   auto thread = guest_interrupts_.StartHostThread("GPU Commands", [this](const std::stop_token&) {
@@ -128,6 +134,7 @@ bool CommandProcessor::Initialize() {
 }
 
 void CommandProcessor::Shutdown() {
+  rex::xenos::SetGammaRampView({});
   worker_running_ = false;
   write_ptr_index_event_->Set();
   worker_thread_ = ScopeGuard();

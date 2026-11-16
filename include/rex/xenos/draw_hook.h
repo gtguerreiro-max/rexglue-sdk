@@ -28,4 +28,18 @@ using PixelConstantHook = bool (*)(u64 pixel_shader_ucode_hash, const u64* used_
 REX_API void SetPixelConstantHook(PixelConstantHook hook);
 REX_API PixelConstantHook GetPixelConstantHook();
 
+/**
+ * The guest's gamma ramps as the Xenos command processor holds them, for a host renderer that
+ * presents the title itself: the 256 entry table (DC_LUT_30_COLOR words, 10:10:10) and the PWL
+ * ramp (128 entries of 3 DC_LUT_PWL_DATA words, base 16 and delta 16 bits). The command
+ * processor's thread writes them as it executes the guest's register writes. Null while no
+ * command processor runs.
+ */
+struct GammaRampView {
+  const u32* table_256 = nullptr;
+  const u32* pwl_rgb = nullptr;
+};
+REX_API void SetGammaRampView(const GammaRampView& view);
+REX_API GammaRampView GetGammaRampView();
+
 }  // namespace rex::xenos
