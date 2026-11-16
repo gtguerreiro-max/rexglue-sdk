@@ -403,7 +403,6 @@ constexpr u32 kFPRSlotBase = 32;
 constexpr u32 kVMXSlotBase = 32;
 constexpr u32 kVMXExtendedSlotBase = 128;
 constexpr u32 kWordBytes = 4;
-constexpr size_t kRunClassCount = 8;
 
 bool IsSaveType(MillicodeType type) {
   return type == MillicodeType::kGPRSave || type == MillicodeType::kFPRSave ||
@@ -555,16 +554,16 @@ void DetectMillicodeRuns(const BinaryView& binary, AnalysisState& state) {
         auto run = ValidateMillicodeRun(binary, addr, type);
         if (!run)
           continue;
+        // Every copy: a title can link the helpers twice (two CRTs, or a library with its own),
+        // and the pdata of each copy names its own entries.
         const bool known = std::any_of(runs.begin(), runs.end(), [&](const MillicodeRun& other) {
-          return IsSameRunClass(other, type, run->first);
+          return other.type == run->type && other.head == run->head;
         });
         if (known)
           continue;
         REXCG_DEBUG("Found {}{} at 0x{:08X}", GetMillicodePrefix(type), run->first, run->head);
         runs.push_back(*run);
       }
-      if (runs.size() == kRunClassCount)
-        return;
     }
   }
 }
