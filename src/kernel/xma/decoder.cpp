@@ -267,7 +267,8 @@ void XMADecoder::WriteRegister(u32 addr, u32 value) {
         }
       }
     }
-    work_event_->Set();
+    // Work() consumes the enable, so every kicked context is done by now. Waking the worker here
+    // only made it sweep all contexts and find nothing.
   } else if (r >= XMARegister::Context0Lock && r <= XMARegister::Context9Lock) {
     // XMADisableContext writes the lock registers.
     u32 base_context_id = (r - XMARegister::Context0Lock) * 32;
