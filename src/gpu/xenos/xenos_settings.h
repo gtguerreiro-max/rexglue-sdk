@@ -80,6 +80,10 @@ class XenosSettings : public SettingOwner {
               "Skip all host GPU work for draws, resolves, shader loads and swaps, for a host "
               "renderer that draws the guest's frames itself (ReXNative); fences, register and "
               "memory write-backs and interrupts still run");
+  REX_SETTING(bool, present_external, false,
+              "A host renderer presents the title into the window itself (ReXNative): while set, "
+              "the driver keeps its presenter off the window, releasing its swap chain, and skips "
+              "its presents");
   REX_SETTING(bool, readback_resolve_half_pixel_offset, false,
               "When draw resolution scaling is active, sample from the center of each scaled block "
               "during resolve readback downscale");

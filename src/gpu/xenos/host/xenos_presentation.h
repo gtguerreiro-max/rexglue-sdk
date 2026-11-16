@@ -67,6 +67,12 @@ class REX_GPU_XENOS_API XenosPresentation final : public IPresentationHost, publ
   bool ConnectToWindow();
 
   /**
+   * Disconnects the presenter from the window, releasing what it holds on the window's surface
+   * (the swap chain), so another presenter can take the window. ConnectToWindow connects again.
+   */
+  void DisconnectFromWindow();
+
+  /**
    * Uploads the overlay textures and keeps the frame for the next paint.
    *
    * @param draw_data The frame, valid until Present returns.

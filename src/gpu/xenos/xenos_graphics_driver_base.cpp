@@ -98,7 +98,15 @@ void XenosGraphicsDriverBase::ResizeSurface(u32 width, u32 height) {
 }
 
 bool XenosGraphicsDriverBase::BeginPresent() {
-  return presentation_ && presentation_->ConnectToWindow();
+  if (!presentation_) {
+    return false;
+  }
+  // A host renderer presents into the window itself: free the window's surface for it.
+  if (present_external.Get()) {
+    presentation_->DisconnectFromWindow();
+    return false;
+  }
+  return presentation_->ConnectToWindow();
 }
 
 void XenosGraphicsDriverBase::RenderOverlays(ImDrawData& draw_data) {

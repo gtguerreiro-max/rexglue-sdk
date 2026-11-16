@@ -60,6 +60,13 @@ bool XenosPresentation::ConnectToWindow() {
   return attached_;
 }
 
+void XenosPresentation::DisconnectFromWindow() {
+  if (attached_) {
+    presenter_->Attach(nullptr, nullptr);
+    attached_ = false;
+  }
+}
+
 void XenosPresentation::SetOverlays(ImDrawData& draw_data) {
   overlay_->UpdateTextures(draw_data);
   draw_data_ = &draw_data;
