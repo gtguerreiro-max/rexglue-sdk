@@ -12,7 +12,6 @@
 // the difference between 2^n and 2^n - 1 (0.003% for 16-bit, 0.8% at most for 8-bit).
 #include <algorithm>
 #include <cstdint>
-#include <cstdlib>
 
 namespace rex::xenos {
 
@@ -20,12 +19,6 @@ namespace rex::xenos {
 // from source (the register file). Only source is read: dest is usually an upload heap mapping,
 // write-combined memory that is very slow to read back.
 inline void AdjustIntegerTextureFetchConstants(uint32_t* dest, const uint32_t* source) {
-  // FROMDUST_INTEGER_FETCH=0 turns it off (for comparisons).
-  static const bool enabled = [] {
-    const char* v = std::getenv("FROMDUST_INTEGER_FETCH");
-    return !v || v[0] != '0';
-  }();
-  if (!enabled) return;
   for (uint32_t i = 0; i < 32; ++i) {
     const uint32_t* f = source + i * 6;
     if ((f[0] & 3) != 2 || !(f[3] & 1)) {
