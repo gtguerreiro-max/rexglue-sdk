@@ -14,12 +14,4 @@
 #include <rex/types.h>
 #include <rex/platform.h>
 #include <rex/kernel/title_runtime.h>
-
-namespace rex {
-namespace xam {
-
-/** Reports whether an XAM dialog is on screen. */
-bool XAMIsUIActive();
-
-}  // namespace xam
-}  // namespace rex
+#include <rex/xam/ui.h>
