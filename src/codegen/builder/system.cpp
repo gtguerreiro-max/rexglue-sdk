@@ -89,8 +89,9 @@ bool Build<PPC_INST_EIEIO>(BuilderContext& ctx) {
 
 template <>
 bool Build<PPC_INST_DB16CYC>(BuilderContext& ctx) {
-  // Xenon 16 cycle delay hint, no effect in recompiled code
-  (void)ctx;
+  // Xenon's 16 cycle delay hint sits in spin wait loops. PAUSE is the host's spin wait hint: the
+  // loop draws less power and leaves the core to its SMT sibling.
+  ctx.Println("	simde_mm_pause();");
   return true;
 }
 
