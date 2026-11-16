@@ -356,6 +356,16 @@ void CommandProcessor::WriteRegister(u32 index, u32 value) {
 
   // Volatile for the WAIT_REG_MEM loop.
   const_cast<volatile u32&>(regs.values[index]) = value;
+  // Shader constants, the most frequent writes by far, are plain storage with no side effects
+  // here; the backend tracks their bindings.
+  if ((index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_000_X) &&
+       index <= std::to_underlying(xenos::Register::SHADER_CONSTANT_511_W)) ||
+      (index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_BOOL_000_031) &&
+       index <= std::to_underlying(xenos::Register::SHADER_CONSTANT_LOOP_31)) ||
+      (index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_00_0) &&
+       index <= std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_31_5))) {
+    return;
+  }
   if (!regs.GetRegisterInfo(index)) {
     REXGPU_WARN_ONCE(unknown_write_once_, index, "GPU: Write to unknown register ({:04X} = {:08X})",
                      index, value);
@@ -684,10 +694,14 @@ bool CommandProcessor::ExecutePacketType0(memory::RingBuffer* reader, u32 packet
 
   u32 base_index = (packet & 0x7FFF);
   u32 write_one_reg = (packet >> 15) & 0x1;
-  for (u32 m = 0; m < count; m++) {
-    u32 reg_data = reader->ReadAndSwap<u32>();
-    u32 target_index = write_one_reg ? base_index : base_index + m;
-    WriteRegister(target_index, reg_data);
+  if (write_one_reg) {
+    for (u32 m = 0; m < count; m++) {
+      WriteRegister(base_index, reader->ReadAndSwap<u32>());
+    }
+  } else {
+    // A sequential write goes through the range writer, which the backend can handle as one copy
+    // (most of these packets set runs of shader constants).
+    WriteRegisterRangeFromRing(reader, base_index, count);
   }
 
   return true;

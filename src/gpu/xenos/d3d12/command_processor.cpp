@@ -1665,6 +1665,17 @@ void D3D12CommandProcessor::ShutdownContext() {
 }
 
 void D3D12CommandProcessor::WriteRegister(u32 index, u32 value) {
+  // Rewriting a shader constant with its current value changes no binding: keep the constant
+  // buffers, texture bindings and vertex buffer residency that depend on it.
+  if (((index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_000_X) &&
+       index <= std::to_underlying(xenos::Register::SHADER_CONSTANT_511_W)) ||
+      (index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_BOOL_000_031) &&
+       index <= std::to_underlying(xenos::Register::SHADER_CONSTANT_LOOP_31)) ||
+      (index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_00_0) &&
+       index <= std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_31_5))) &&
+      register_file_->values[index] == value) {
+    return;
+  }
   CommandProcessor::WriteRegister(index, value);
 
   if (index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_000_X) &&
@@ -1706,6 +1717,18 @@ void D3D12CommandProcessor::WriteRegistersFromMem(u32 start_index, u32* base, u3
   }
   u32 end_index = start_index + num_registers - 1;
 
+  // Titles often send whole constant groups again unchanged; the copy and the binding
+  // invalidation are skipped for those.
+  auto range_unchanged = [&]() {
+    const u32* old_values = register_file_->values + start_index;
+    for (u32 i = 0; i < num_registers; ++i) {
+      if (old_values[i] != memory::load<be_u32>(base + i)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
   auto range_has_any_constant_usage = [](const u64* usage_map, u32 first_constant,
                                          u32 last_constant) -> bool {
     if (first_constant > last_constant) {
@@ -1734,6 +1757,9 @@ void D3D12CommandProcessor::WriteRegistersFromMem(u32 start_index, u32* base, u3
 
   if (start_index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_000_X) &&
       end_index <= std::to_underlying(xenos::Register::SHADER_CONSTANT_511_W)) {
+    if (range_unchanged()) {
+      return;
+    }
     memory::copy_and_swap(register_file_->values + start_index, base, num_registers);
     if (frame_open_) {
       u32 first_float_constant =
@@ -1761,6 +1787,9 @@ void D3D12CommandProcessor::WriteRegistersFromMem(u32 start_index, u32* base, u3
 
   if (start_index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_BOOL_000_031) &&
       end_index <= std::to_underlying(xenos::Register::SHADER_CONSTANT_LOOP_31)) {
+    if (range_unchanged()) {
+      return;
+    }
     memory::copy_and_swap(register_file_->values + start_index, base, num_registers);
     cbuffer_binding_bool_loop_.up_to_date = false;
     return;
@@ -1768,6 +1797,9 @@ void D3D12CommandProcessor::WriteRegistersFromMem(u32 start_index, u32* base, u3
 
   if (start_index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_00_0) &&
       end_index <= std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_31_5)) {
+    if (range_unchanged()) {
+      return;
+    }
     memory::copy_and_swap(register_file_->values + start_index, base, num_registers);
     cbuffer_binding_fetch_.up_to_date = false;
     u32 first_fetch_dword =
