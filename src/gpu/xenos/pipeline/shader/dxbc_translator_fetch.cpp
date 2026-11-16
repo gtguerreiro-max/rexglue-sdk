@@ -48,11 +48,17 @@ void DXBCShaderTranslator::ProcessVertexFetchInstruction(
   }
 
   // vf0 is in [0].xy of the fetch constants array, vf1 in [0].zw and vf2 in [1].xy.
-  if (cbuffer_index_fetch_constants_ == kBindingIndexUnallocated) {
-    cbuffer_index_fetch_constants_ = cbuffer_count_++;
+  // The motion vector pass reads the previous frame's fetch constants (vertex data the title
+  // streams per frame, such as instance transforms, moves between frames).
+  u32& cbuffer_index = motion_vector_pass_ ? cbuffer_index_previous_fetch_constants_
+                                           : cbuffer_index_fetch_constants_;
+  if (cbuffer_index == kBindingIndexUnallocated) {
+    cbuffer_index = cbuffer_count_++;
   }
   dxbc::Src fetch_constant_src(dxbc::Src::CB(
-      cbuffer_index_fetch_constants_, std::to_underlying(CbufferRegister::kFetchConstants),
+      cbuffer_index,
+      std::to_underlying(motion_vector_pass_ ? CbufferRegister::kPreviousFetchConstants
+                                             : CbufferRegister::kFetchConstants),
       instr.operands[1].storage_index >> 1,
       (instr.operands[1].storage_index & 1) ? 0b10101110 : 0b00000100));
 

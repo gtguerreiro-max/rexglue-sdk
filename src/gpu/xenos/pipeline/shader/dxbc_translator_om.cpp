@@ -903,6 +903,32 @@ void DXBCShaderTranslator::CompletePixelShaderWriteToRTVs() {
   PopSystemTemp();
 }
 
+void DXBCShaderTranslator::CompletePixelShaderWriteMotionVectors() {
+  // The current and the previous host clip space position.
+  u32 positions = in_reg_ps_interpolators_ + GetMotionVectorInterpolatorIndex();
+  u32 temp = PushSystemTemp();
+  // XY: this frame's NDC position, ZW: the previous frame's.
+  a_.OpDiv(dxbc::Dest::R(temp, 0b0011), dxbc::Src::V1D(positions),
+           dxbc::Src::V1D(positions, dxbc::Src::kWWWW));
+  a_.OpDiv(dxbc::Dest::R(temp, 0b1100), dxbc::Src::V1D(positions + 1, 0b01000100),
+           dxbc::Src::V1D(positions + 1, dxbc::Src::kWWWW));
+  a_.OpAdd(dxbc::Dest::R(temp, 0b0011), dxbc::Src::R(temp, 0b1110), -dxbc::Src::R(temp));
+  // NDC to UV: half the extent, Y down.
+  a_.OpMul(dxbc::Dest::R(temp, 0b0011), dxbc::Src::R(temp), dxbc::Src::LF(0.5f, -0.5f, 0.0f, 0.0f));
+  // A previous position behind the camera (W <= 0, which the division flips) was not on screen:
+  // it moves by the bound, two screens. The bound also keeps a position just in front of the
+  // camera, and NaN (max returns the other operand), finite in the half-float target, where an
+  // infinity would spread through a temporal upscaler's history.
+  a_.OpLT(dxbc::Dest::R(temp, 0b0100), dxbc::Src::LF(0.0f),
+          dxbc::Src::V1D(positions + 1, dxbc::Src::kWWWW));
+  a_.OpMovC(dxbc::Dest::R(temp, 0b0011), dxbc::Src::R(temp, dxbc::Src::kZZZZ), dxbc::Src::R(temp),
+            dxbc::Src::LF(2.0f));
+  a_.OpMax(dxbc::Dest::R(temp, 0b0011), dxbc::Src::R(temp), dxbc::Src::LF(-2.0f));
+  a_.OpMin(dxbc::Dest::O(kMotionVectorRenderTarget, 0b0011), dxbc::Src::R(temp),
+           dxbc::Src::LF(2.0f));
+  PopSystemTemp();
+}
+
 void DXBCShaderTranslator::CompletePixelShaderDSVDepthTo24Bit() {
   bool shader_writes_depth = GetCurrentShader().IsDepthWritten();
 
@@ -1575,6 +1601,9 @@ void DXBCShaderTranslator::CompletePixelShader() {
     CompletePixelShaderWriteToROV();
   } else {
     CompletePixelShaderWriteToRTVs();
+    if (GetDXBCShaderModification().pixel.motion_vectors) {
+      CompletePixelShaderWriteMotionVectors();
+    }
     CompletePixelShaderDSVDepthTo24Bit();
   }
 }

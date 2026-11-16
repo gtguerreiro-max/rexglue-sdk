@@ -106,6 +106,11 @@ class DXBCShaderTranslator : public ShaderTranslator {
       /** Value of PA_CL_CLIP_CNTL::ps_ucp_mode for point primitives. */
       u32 point_ps_ucp_mode : 2;
       Shader::HostVertexShaderType host_vertex_shader_type : Shader::kHostVertexShaderTypeBitCount;
+      // Motion vectors for a temporal upscaler (ReXNative): the shader runs a second time with the
+      // previous frame's float and vertex fetch constants (kPreviousFloatConstants,
+      // kPreviousFetchConstants) and outputs both host clip space positions after the
+      // interpolators. kVertex only, without memexport.
+      u32 motion_vectors : 1;
     } vertex;
     struct PixelShaderModification {
       u32 interpolator_mask : xenos::kMaxInterpolators;
@@ -120,6 +125,10 @@ class DXBCShaderTranslator : public ShaderTranslator {
       u32 dynamic_addressable_register_count : 8;
       /** Used without ROV only. */
       DepthStencilMode depth_stencil_mode : 2;
+      // Motion vectors for a temporal upscaler, with a vertex shader that has motion_vectors:
+      // writes the screen space motion from this pixel to its previous position to
+      // kMotionVectorRenderTarget. RTV only.
+      u32 motion_vectors : 1;
     } pixel;
 
     explicit Modification(u64 modification_value = 0) : value(modification_value) {
@@ -142,7 +151,19 @@ class DXBCShaderTranslator : public ShaderTranslator {
     kBoolLoopConstants,
     kFetchConstants,
     kDescriptorIndices,
+    // Vertex shaders with motion_vectors: the float constants of the previous frame, packed like
+    // kFloatConstants, and the fetch constants its vertex fetches read (vertex data the title
+    // streams per frame, such as instance transforms, moves between frames).
+    kPreviousFloatConstants,
+    kPreviousFetchConstants,
   };
+
+  // Motion vectors (Modification::vertex/pixel.motion_vectors): the current and the previous
+  // host clip space position after the guest's interpolators, and the render target the motion
+  // in UV space goes to (RG: previous minus current position, Y down; fixed past the guest's
+  // targets so the guest's stay where they are).
+  static constexpr u32 kMotionVectorInterpolatorCount = 2;
+  static constexpr u32 kMotionVectorRenderTarget = xenos::kMaxColorRenderTargets;
 
   /** Some flags are referenced in xenos_draw.hlsli and must stay in sync with it. */
   enum : u32 {
@@ -645,6 +666,19 @@ class DXBCShaderTranslator : public ShaderTranslator {
     return IsVertexShader() ? modification.vertex.interpolator_mask
                             : modification.pixel.interpolator_mask;
   }
+  bool IsMotionVectorShader() const {
+    Modification modification = GetDXBCShaderModification();
+    return IsVertexShader() ? modification.vertex.motion_vectors
+                            : modification.pixel.motion_vectors;
+  }
+  // The motion vector positions follow the guest's interpolators.
+  u32 GetMotionVectorInterpolatorIndex() const {
+    return u32(std::popcount(GetModificationInterpolatorMask()));
+  }
+  u32 GetInterpolatorRegisterCount() const {
+    return GetMotionVectorInterpolatorIndex() +
+           (IsMotionVectorShader() ? kMotionVectorInterpolatorCount : 0);
+  }
 
   bool IsSwitchControlFlowUsed() const;
 
@@ -796,6 +830,13 @@ class DXBCShaderTranslator : public ShaderTranslator {
    */
   void StartPixelShader();
 
+  // Undoes the guest's XY/W, Z/W and 1/W position output options in a temp.
+  void NormalizeVertexPosition(u32 position_temp, u32 temp);
+  // Guest to host clip space (the NDC scale and offset).
+  void ConvertVertexPositionToHost(u32 position_temp);
+  // With motion_vectors, after the main loop: runs the shader again with the previous float and
+  // vertex fetch constants, keeping only its position, and outputs that in host clip space.
+  void CompleteVertexShaderPreviousPosition();
   void CompleteVertexOrDomainShader();
   /**
    * Tests a sample against alpha to mask.
@@ -825,10 +866,15 @@ class DXBCShaderTranslator : public ShaderTranslator {
    */
   void CompletePixelShaderAlphaToMask();
   void CompletePixelShaderWriteToRTVs();
+  void CompletePixelShaderWriteMotionVectors();
   void CompletePixelShaderDSVDepthTo24Bit();
   void CompletePixelShaderWriteToROV();
   void CompletePixelShader();
 
+  // The loop and the switch (or the conditional) that jumps to labels by setting pc, around the
+  // code of TranslateUcode.
+  void StartMainLoop();
+  void CompleteMainLoop();
   void CompleteShaderCode();
 
   /**
@@ -1008,6 +1054,11 @@ class DXBCShaderTranslator : public ShaderTranslator {
   u32 cbuffer_index_bool_loop_constants_;
   u32 cbuffer_index_fetch_constants_;
   u32 cbuffer_index_descriptor_indices_;
+  u32 cbuffer_index_previous_float_constants_;
+  u32 cbuffer_index_previous_fetch_constants_;
+  // The motion vector pass (CompleteVertexShaderPreviousPosition): float and vertex fetch
+  // constants are the previous frame's, and only registers and the position are written.
+  bool motion_vector_pass_;
 
   struct SystemConstantRDEF {
     const char* name;

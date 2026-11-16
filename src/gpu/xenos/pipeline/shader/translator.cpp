@@ -558,24 +558,7 @@ bool ShaderTranslator::TranslateAnalyzedShader(Shader::Translation& translation)
 
   StartTranslation();
 
-  const u32* ucode_dwords = shader.GetUcodeData().data();
-
-  u32 cf_pair_index_bound = shader.GetCFPairIndexBound();
-  const std::set<u32>& label_addresses = shader.GetLabelAddresses();
-  for (u32 i = 0; i < cf_pair_index_bound; ++i) {
-    ControlFlowInstruction cf_ab[2];
-    UnpackControlFlowInstructions(ucode_dwords + size_t{i} * 3, cf_ab);
-    for (u32 j = 0; j < 2; ++j) {
-      u32 cf_index = i * 2 + j;
-      cf_index_ = cf_index;
-      if (label_addresses.find(cf_index) != label_addresses.end()) {
-        ProcessLabel(cf_index);
-      }
-      ProcessControlFlowInstructionBegin(cf_index);
-      TranslateControlFlowInstruction(cf_ab[j]);
-      ProcessControlFlowInstructionEnd(cf_index);
-    }
-  }
+  TranslateUcode();
 
   translation.errors_ = std::move(errors_);
   translation.translated_binary_ = CompleteTranslation();
@@ -594,6 +577,28 @@ bool ShaderTranslator::TranslateAnalyzedShader(Shader::Translation& translation)
 
   // PostTranslation may change is_valid_, so reload it.
   return translation.is_valid_;
+}
+
+void ShaderTranslator::TranslateUcode() {
+  const Shader& shader = translation_->GetShader();
+  const u32* ucode_dwords = shader.GetUcodeData().data();
+  previous_vfetch_full_ = {};
+  u32 cf_pair_index_bound = shader.GetCFPairIndexBound();
+  const std::set<u32>& label_addresses = shader.GetLabelAddresses();
+  for (u32 i = 0; i < cf_pair_index_bound; ++i) {
+    ControlFlowInstruction cf_ab[2];
+    UnpackControlFlowInstructions(ucode_dwords + size_t{i} * 3, cf_ab);
+    for (u32 j = 0; j < 2; ++j) {
+      u32 cf_index = i * 2 + j;
+      cf_index_ = cf_index;
+      if (label_addresses.find(cf_index) != label_addresses.end()) {
+        ProcessLabel(cf_index);
+      }
+      ProcessControlFlowInstructionBegin(cf_index);
+      TranslateControlFlowInstruction(cf_ab[j]);
+      ProcessControlFlowInstructionEnd(cf_index);
+    }
+  }
 }
 
 void ShaderTranslator::EmitTranslationError(const char* message, bool is_fatal) {

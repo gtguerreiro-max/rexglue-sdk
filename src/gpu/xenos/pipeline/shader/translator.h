@@ -88,6 +88,12 @@ class REX_GPU_XENOS_API ShaderTranslator : public rex::NonCopyable {
     translation.host_disassembly_ = std::move(value);
   }
 
+  // Translates the control flow instructions and the instructions of their execs, in ucode
+  // order. TranslateAnalyzedShader calls it once between StartTranslation and
+  // CompleteTranslation; an implementation may call it again to emit the shader's code once more
+  // (the motion vector pass, ReXNative).
+  void TranslateUcode();
+
   /** Called once per label required by control flow, before the instructions of the target exec. */
   virtual void ProcessLabel(u32 /*cf_index*/) {}
 
