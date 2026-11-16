@@ -16,6 +16,7 @@
 #include <rex/xam/content_manager.h>
 #include <rex/xam/language.h>
 #include <rex/xam/title_lifecycle.h>
+#include <rex/kernel/module.h>
 #include <rex/kernel/object/module_object.h>
 #include <rex/kernel/title_runtime.h>
 #include <rex/kernel/title_paths.h>
@@ -482,6 +483,19 @@ Result<void> TitleState::LoadXEXImage(const std::string_view module_path) {
     kernel::CloseOwned(*object_table_, handle);
     return Err(
         SetupError(status, std::format("cannot load {}, status {:08X}", module_path, status)));
+  }
+  // The recompiled code matches only the image it was generated from: a missing, extra or
+  // different title update loads another image, of another size, under the same code, which then
+  // fails far from the cause.
+  if (const kernel::XEXModule* xex = module->GetXEX();
+      !tool_mode_ && xex && image_.image_size && xex->GetImageSize() != image_.image_size) {
+    const u32 loaded_size = xex->GetImageSize();
+    kernel::CloseOwned(*object_table_, handle);
+    return Err(SetupError(
+        X_STATUS_UNSUCCESSFUL,
+        std::format("{} loads as a {:#x}-byte image, but the code was recompiled from a {:#x}-byte "
+                    "one. Is the title update it was generated with in place (update data: '{}')?",
+                    module_path, loaded_size, image_.image_size, update_data_root_.string())));
   }
 
   SetExecutableModule(handle);
