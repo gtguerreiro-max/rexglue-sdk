@@ -656,6 +656,14 @@ int SocketObject::RecvFrom(u8* buf, u32 buf_len, u32 flags, N_XSOCKADDR_IN* from
 
 ReceiveResult SocketObject::TryRecvFrom(u8* buf, u32 buf_len, u32 flags) const {
   ReceiveResult result;
+  // An overlapped receive on an unbound datagram socket fails as a blocking one does
+  // (UnboundDatagram): pending, it would never complete under Wine.
+  if (UnboundDatagram(*this)) {
+    result.received = -1;
+    result.would_block = false;
+    result.error = rex::platform::GetSocketError();
+    return result;
+  }
   sockaddr_in nfrom{};
   i32 nfromlen = sizeof(nfrom);
   result.received =
