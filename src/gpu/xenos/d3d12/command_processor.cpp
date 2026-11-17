@@ -1666,7 +1666,10 @@ void D3D12CommandProcessor::ShutdownContext() {
 
 void D3D12CommandProcessor::WriteRegister(u32 index, u32 value) {
   // Rewriting a shader constant with its current value changes no binding: keep the constant
-  // buffers, texture bindings and vertex buffer residency that depend on it.
+  // buffers and texture bindings that depend on it. A fetch constant written again still drops
+  // its vertex buffer's residency: the title may have refilled the buffer in place (vertex
+  // buffers have no memory watch of their own), and the write is what made the next draw request
+  // the range again before the early return.
   if (((index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_000_X) &&
        index <= std::to_underlying(xenos::Register::SHADER_CONSTANT_511_W)) ||
       (index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_BOOL_000_031) &&
@@ -1674,6 +1677,11 @@ void D3D12CommandProcessor::WriteRegister(u32 index, u32 value) {
       (index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_00_0) &&
        index <= std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_31_5))) &&
       register_file_->values[index] == value) {
+    if (index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_00_0) &&
+        index <= std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_31_5)) {
+      InvalidateVertexBufferResidency(
+          (index - std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_00_0)) / 2);
+    }
     return;
   }
   CommandProcessor::WriteRegister(index, value);
@@ -1797,15 +1805,17 @@ void D3D12CommandProcessor::WriteRegistersFromMem(u32 start_index, u32* base, u3
 
   if (start_index >= std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_00_0) &&
       end_index <= std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_31_5)) {
-    if (range_unchanged()) {
-      return;
-    }
-    memory::copy_and_swap(register_file_->values + start_index, base, num_registers);
-    cbuffer_binding_fetch_.up_to_date = false;
     u32 first_fetch_dword =
         start_index - std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_00_0);
     u32 last_fetch_dword =
         end_index - std::to_underlying(xenos::Register::SHADER_CONSTANT_FETCH_00_0);
+    if (range_unchanged()) {
+      // The vertex buffers' residency goes all the same (WriteRegister).
+      InvalidateVertexBufferResidencyRange(first_fetch_dword / 2, last_fetch_dword / 2);
+      return;
+    }
+    memory::copy_and_swap(register_file_->values + start_index, base, num_registers);
+    cbuffer_binding_fetch_.up_to_date = false;
     if (texture_cache_) {
       texture_cache_->TextureFetchConstantsWritten(first_fetch_dword / 6, last_fetch_dword / 6);
     }
