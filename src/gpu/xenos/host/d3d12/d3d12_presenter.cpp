@@ -35,6 +35,8 @@ namespace shaders {
 }  // namespace shaders
 
 D3D12Presenter::~D3D12Presenter() {
+  xenos::ClearGuestOutputSource(this);
+  external_copy_submission_tracker_.Shutdown();
   paint_context_.AwaitSwapChainUsageCompletion();
   guest_output_resource_refresher_submission_tracker_.Shutdown();
   ui_submission_tracker_.Shutdown();
@@ -233,6 +235,96 @@ bool D3D12Presenter::DriverRefreshGuestOutput(
       guest_output_resource_refresher_submission_tracker_.GetCurrentSubmission();
   guest_output_resource_refresher_submission_tracker_.NextSubmission();
   return refresher_succeeded;
+}
+
+bool D3D12Presenter::CopyGuestOutputThunk(void* context, const xenos::GuestOutputCopy& request,
+                                          xenos::GuestOutputInfo* info) {
+  return static_cast<D3D12Presenter*>(context)->CopyGuestOutputExternal(request, *info);
+}
+
+bool D3D12Presenter::CopyGuestOutputExternal(const xenos::GuestOutputCopy& request,
+                                             xenos::GuestOutputInfo& info) {
+  std::lock_guard<std::mutex> lock(external_copy_mutex_);
+  u32 mailbox_index;
+  // Held while the copy is submitted: the refresher writes another mailbox image meanwhile, and
+  // this one only after a later consume, in queue order after this copy.
+  std::unique_lock<std::mutex> consumer_lock(
+      ConsumeGuestOutput(mailbox_index, nullptr, nullptr));
+  if (mailbox_index == UINT32_MAX) {
+    return false;
+  }
+  const std::pair<UINT64, Microsoft::WRL::ComPtr<ID3D12Resource>>& source =
+      guest_output_resources_[mailbox_index];
+  if (!source.second) {
+    return false;
+  }
+  const D3D12_RESOURCE_DESC source_desc = source.second->GetDesc();
+  info.width = static_cast<u32>(source_desc.Width);
+  info.height = source_desc.Height;
+  info.serial = source.first;
+  if (!request.dest || !request.fence || request.dest_width < info.width ||
+      request.dest_height < info.height) {
+    return false;
+  }
+
+  ID3D12Device* device = provider_.GetDevice();
+  ID3D12CommandQueue* queue = provider_.GetDirectQueue();
+  if (!external_copy_list_) {
+    for (auto& allocator : external_copy_allocators_) {
+      if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                                IID_PPV_ARGS(&allocator)))) {
+        REXUI_ERROR("D3D12Presenter: Failed to create an external guest output copy allocator");
+        return false;
+      }
+    }
+    if (FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                         external_copy_allocators_[0].Get(), nullptr,
+                                         IID_PPV_ARGS(&external_copy_list_))) ||
+        FAILED(external_copy_list_->Close()) ||
+        !external_copy_submission_tracker_.Initialize(device, queue)) {
+      REXUI_ERROR("D3D12Presenter: Failed to create the external guest output copy list");
+      external_copy_list_.Reset();
+      return false;
+    }
+  }
+  const UINT64 submission = external_copy_submission_tracker_.GetCurrentSubmission();
+  if (submission > kExternalCopyAllocators) {
+    external_copy_submission_tracker_.AwaitSubmissionCompletion(submission -
+                                                                kExternalCopyAllocators);
+  }
+  ID3D12CommandAllocator* allocator =
+      external_copy_allocators_[submission % kExternalCopyAllocators].Get();
+  allocator->Reset();
+  ID3D12GraphicsCommandList* list = external_copy_list_.Get();
+  list->Reset(allocator, nullptr);
+  D3D12_RESOURCE_BARRIER barrier;
+  barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+  barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+  barrier.Transition.pResource = source.second.Get();
+  barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+  barrier.Transition.StateBefore = kGuestOutputInternalState;
+  barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+  list->ResourceBarrier(1, &barrier);
+  D3D12_TEXTURE_COPY_LOCATION dest_location, source_location;
+  dest_location.pResource = static_cast<ID3D12Resource*>(request.dest);
+  dest_location.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+  dest_location.SubresourceIndex = 0;
+  source_location.pResource = source.second.Get();
+  source_location.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+  source_location.SubresourceIndex = 0;
+  const D3D12_BOX box = {0, 0, 0, info.width, info.height, 1};
+  list->CopyTextureRegion(&dest_location, 0, 0, 0, &source_location, &box);
+  std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+  list->ResourceBarrier(1, &barrier);
+  if (FAILED(list->Close())) {
+    REXUI_ERROR("D3D12Presenter: Failed to close the external guest output copy list");
+    return false;
+  }
+  ID3D12CommandList* lists[] = {list};
+  queue->ExecuteCommandLists(1, lists);
+  queue->Signal(static_cast<ID3D12Fence*>(request.fence), request.fence_value);
+  external_copy_submission_tracker_.NextSubmission();
+  return true;
 }
 
 void D3D12Presenter::PaintContext::DestroySwapChain() {

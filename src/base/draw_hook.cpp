@@ -6,6 +6,7 @@
 #include <rex/xenos/draw_hook.h>
 
 #include <atomic>
+#include <mutex>
 
 namespace rex::xenos {
 
@@ -34,6 +35,36 @@ void SetGammaRampView(const GammaRampView& view) {
 GammaRampView GetGammaRampView() {
   return {g_gamma_table_256.load(std::memory_order_acquire),
           g_gamma_pwl_rgb.load(std::memory_order_acquire)};
+}
+
+namespace {
+// Held across a copy, so clearing the source waits for a copy running through it.
+std::mutex g_guest_output_mutex;
+GuestOutputSource g_guest_output_source;
+}  // namespace
+
+void SetGuestOutputSource(const GuestOutputSource& source) {
+  std::lock_guard<std::mutex> lock(g_guest_output_mutex);
+  g_guest_output_source = source;
+}
+
+void ClearGuestOutputSource(void* context) {
+  std::lock_guard<std::mutex> lock(g_guest_output_mutex);
+  if (g_guest_output_source.context == context) g_guest_output_source = {};
+}
+
+void* GetGuestOutputDevice() {
+  std::lock_guard<std::mutex> lock(g_guest_output_mutex);
+  return g_guest_output_source.copy ? g_guest_output_source.d3d12_device : nullptr;
+}
+
+bool CopyGuestOutput(const GuestOutputCopy& request, GuestOutputInfo* info) {
+  std::lock_guard<std::mutex> lock(g_guest_output_mutex);
+  GuestOutputInfo local;
+  if (!info) info = &local;
+  *info = {};
+  const GuestOutputSource& s = g_guest_output_source;
+  return s.copy && s.copy(s.context, request, info);
 }
 
 }  // namespace rex::xenos

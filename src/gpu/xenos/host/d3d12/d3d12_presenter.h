@@ -13,6 +13,7 @@
 
 #include <array>
 #include <memory>
+#include <mutex>
 #include <utility>
 
 #include <rex/math.h>
@@ -22,6 +23,7 @@
 #include "gpu/xenos/host/surface.h"
 #include <rex/types.h>
 #include <rex/utility.h>
+#include <rex/xenos/draw_hook.h>
 
 namespace rex::gpu::d3d12 {
 
@@ -86,6 +88,8 @@ class D3D12Presenter final : public Presenter {
     if (!presenter->InitializeSurfaceIndependent()) {
       return nullptr;
     }
+    // The guest output for a host renderer presenting the title itself (rex/xenos/draw_hook.h).
+    xenos::SetGuestOutputSource({presenter.get(), provider.GetDevice(), &CopyGuestOutputThunk});
     return presenter;
   }
 
@@ -210,6 +214,18 @@ class D3D12Presenter final : public Presenter {
   };
 
   bool InitializeSurfaceIndependent();
+
+  // rex/xenos/draw_hook.h's GuestOutputSource: copies the guest output the presenter would paint
+  // next (consuming it, as a paint does) into the host renderer's texture, on the direct queue.
+  static bool CopyGuestOutputThunk(void* context, const xenos::GuestOutputCopy& request,
+                                   xenos::GuestOutputInfo* info);
+  bool CopyGuestOutputExternal(const xenos::GuestOutputCopy& request, xenos::GuestOutputInfo& info);
+  static constexpr u32 kExternalCopyAllocators = 3;
+  std::mutex external_copy_mutex_;
+  std::array<Microsoft::WRL::ComPtr<ID3D12CommandAllocator>, kExternalCopyAllocators>
+      external_copy_allocators_;
+  Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> external_copy_list_;
+  D3D12SubmissionTracker external_copy_submission_tracker_;
 
   const D3D12Provider& provider_;
 
