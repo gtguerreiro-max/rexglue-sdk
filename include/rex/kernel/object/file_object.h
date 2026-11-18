@@ -179,6 +179,11 @@ struct FileObject : IOpenedFile {
   /** Directory listing a find call is walking, null before the first find. */
   PropagateConst<std::unique_ptr<filesystem::IDirectory>> find;
   bool is_synchronous = false;
+  /** False when the file was opened with FILE_NO_INTERMEDIATE_BUFFERING. */
+  bool allow_buffering = true;
+  /** True for a file in a content package (\Device\Content\): the console's STFS driver queues
+   * every request, so an asynchronous read or write reports STATUS_PENDING. */
+  bool io_queued = false;
   /** The runtime the interface Read and Write run in, set when the table creates the file. */
   TitleRuntime* owner = nullptr;
 

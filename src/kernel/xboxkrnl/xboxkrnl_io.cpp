@@ -30,6 +30,7 @@
 #include <rex/kernel/object/file_object.h>
 #include <rex/kernel/object/kernel_thread.h>
 #include <rex/kernel/types/status.h>
+#include <rex/string/text.h>
 #include "kernel/argument_check.h"
 #include "kernel/object_lookup.h"
 #include "kernel/path_check.h"
@@ -86,6 +87,34 @@ static void InitializeFileObject(u32 address, u32 create_options, u32 related_fi
 
 static bool IsErrorStatus(X_STATUS status) {
   return (status & 0xC0000000) == 0xC0000000;
+}
+
+/**
+ * Whether an asynchronous read or write, already done, returns STATUS_PENDING as on the console
+ * (Xenia canary 976c3578b1, from hardware tests). A content package queues every request, even
+ * one that stops at the end of the file; elsewhere only an unbuffered request that succeeded, and
+ * for a write one that does not extend the file, is pending: a buffered one returns its status.
+ * The result is in the I/O status block before the event is set either way. Titles count on it:
+ * Minecraft reads its save list with an overlapped ReadFile and waits for the pending result,
+ * a ReadFile that succeeds at once leaves its Load tab loading forever.
+ *
+ * @param extends For a write, whether it goes past the end of the file.
+ */
+static bool ReportsPending(const FileObject& file, X_STATUS result, u32 length, bool extends) {
+  if (file.is_synchronous) {
+    return false;
+  }
+  if (file.io_queued) {
+    return result == X_STATUS_SUCCESS || result == X_STATUS_END_OF_FILE;
+  }
+  return !file.allow_buffering && length && !extends && result == X_STATUS_SUCCESS;
+}
+
+/** @return Whether a resolved guest path is in a mounted content package. */
+static bool IsContentPackagePath(std::string_view path) {
+  constexpr std::string_view kContent = "\\Device\\Content\\";
+  return path.size() >= kContent.size() &&
+         rex::string::utf8_equal_case(path.substr(0, kContent.size()), kContent);
 }
 
 static bool QueueCompletionAPC(u32 apc_routine, u32 apc_context, u32 io_status_block,
@@ -168,6 +197,10 @@ u32 NtCreateFile_entry(MappedU32 handle_out, u32 desired_access,
         InitializeFileObject(file.GetGuestAddress(), create_options,
                              root_file ? root_file.GetGuestAddress() : 0);
       }
+      if (auto file = kernel::GetCurrent().GetObjectTable().Get<FileObject>(handle)) {
+        file->allow_buffering = !(create_options & CreateOptions::kFileNoIntermediateBuffering);
+        file->io_queued = IsContentPackagePath(file->GetAbsolutePath());
+      }
     }
     result = ToXStatus(added);
   }
@@ -225,6 +258,7 @@ u32 NtReadFile_entry(u32 file_handle, u32 event_handle, MappedVoid apc_routine_p
       byte_offset_ptr ? static_cast<i64>(byte_offset) : -1);
   X_STATUS result = X_STATUS_SUCCESS;
   bool apc_queued = false;
+  bool pending = false;
 
   bool signal_event = false;
   auto ev = kernel::GetCurrent().GetObjectTable().Get<EventObject>(event_handle);
@@ -242,8 +276,9 @@ u32 NtReadFile_entry(u32 file_handle, u32 event_handle, MappedVoid apc_routine_p
     result = file->Read(kernel::GetCurrent(), buffer.GetGuestAddress(), buffer_length,
                         byte_offset_ptr ? static_cast<u64>(*byte_offset_ptr) : -1, &bytes_read,
                         apc_context.GetGuestAddress());
+    pending = ReportsPending(*file, result, buffer_length, false);
 
-    if (!IsErrorStatus(result)) {
+    if (!IsErrorStatus(result) || pending) {
       if (io_status_block) {
         io_status_block->status = result;
         io_status_block->information = bytes_read;
@@ -266,24 +301,25 @@ u32 NtReadFile_entry(u32 file_handle, u32 event_handle, MappedVoid apc_routine_p
     REXKRNL_TRACE(
         "NtReadFile -> "
         "{:#x} (sync={}, iosb_status={:#x}, iosb_info={}, ev_signaled={}, apc_requested={}, "
-        "apc_queued={})",
+        "apc_queued={}, pending={})",
         result, file->is_synchronous,
         io_status_block ? static_cast<u32>(io_status_block->status) : 0xDEAD,
         io_status_block ? static_cast<u32>(io_status_block->information) : 0, ev && signal_event,
-        apc_requested, apc_queued);
+        apc_requested, apc_queued, pending);
   } else {
     REXKRNL_TRACE(
         "NtReadFile -> "
         "{:#x} (apc_requested={}, apc_queued={})",
         result, apc_requested, apc_queued);
   }
-  return result;
+  return pending ? X_STATUS_PENDING : result;
 }
 
 u32 NtReadFileScatter_entry(u32 file_handle, u32 event_handle, MappedVoid apc_routine_ptr,
                             MappedVoid apc_context, GuestPtrT<X_IO_STATUS_BLOCK> io_status_block,
                             MappedU32 segment_array, u32 length, MappedU64 byte_offset_ptr) {
   X_STATUS result = X_STATUS_SUCCESS;
+  bool pending = false;
 
   bool signal_event = false;
   auto ev = kernel::GetCurrent().GetObjectTable().Get<EventObject>(event_handle);
@@ -301,8 +337,9 @@ u32 NtReadFileScatter_entry(u32 file_handle, u32 event_handle, MappedVoid apc_ro
     result = file->ReadScatter(kernel::GetCurrent(), segment_array.GetGuestAddress(), length,
                                byte_offset_ptr ? static_cast<u64>(*byte_offset_ptr) : -1,
                                &bytes_read, apc_context.GetGuestAddress());
+    pending = ReportsPending(*file, result, length, false);
 
-    if (!IsErrorStatus(result)) {
+    if (!IsErrorStatus(result) || pending) {
       if (io_status_block) {
         io_status_block->status = result;
         io_status_block->information = bytes_read;
@@ -320,13 +357,14 @@ u32 NtReadFileScatter_entry(u32 file_handle, u32 event_handle, MappedVoid apc_ro
     ev->Set();
   }
 
-  return result;
+  return pending ? X_STATUS_PENDING : result;
 }
 
 u32 NtWriteFile_entry(u32 file_handle, u32 event_handle, u32 apc_routine, MappedVoid apc_context,
                       GuestPtrT<X_IO_STATUS_BLOCK> io_status_block, MappedVoid buffer,
                       u32 buffer_length, MappedU64 byte_offset_ptr) {
   X_STATUS result = X_STATUS_SUCCESS;
+  bool pending = false;
 
   bool signal_event = false;
   auto ev = kernel::GetCurrent().GetObjectTable().Get<EventObject>(event_handle);
@@ -340,12 +378,23 @@ u32 NtWriteFile_entry(u32 file_handle, u32 event_handle, u32 apc_routine, Mapped
   }
 
   if (XSUCCEEDED(result)) {
+    // An unbuffered write past the end of the file returns its status (Xenia checks the same).
+    bool extends = false;
+    if (!file->is_synchronous && !file->allow_buffering && !file->io_queued && buffer_length) {
+      file->file->Refresh();
+      const u64 size = file->GetSize();
+      const u64 offset = byte_offset_ptr && static_cast<u64>(*byte_offset_ptr) < ~u64{1}
+                             ? static_cast<u64>(*byte_offset_ptr)
+                             : file->GetPosition();
+      extends = offset > size || buffer_length > size - offset;
+    }
     u32 bytes_written = 0;
     result = file->Write(kernel::GetCurrent(), buffer.GetGuestAddress(), buffer_length,
                          byte_offset_ptr ? static_cast<u64>(*byte_offset_ptr) : -1, &bytes_written,
                          apc_context.GetGuestAddress());
+    pending = ReportsPending(*file, result, buffer_length, extends);
 
-    if (!IsErrorStatus(result)) {
+    if (!IsErrorStatus(result) || pending) {
       if (io_status_block) {
         io_status_block->status = result;
         io_status_block->information = bytes_written;
@@ -363,7 +412,7 @@ u32 NtWriteFile_entry(u32 file_handle, u32 event_handle, u32 apc_routine, Mapped
     ev->Set();
   }
 
-  return result;
+  return pending ? X_STATUS_PENDING : result;
 }
 
 u32 NtCreateIoCompletion_entry(MappedU32 handle_out, [[maybe_unused]] u32 desired_access,
