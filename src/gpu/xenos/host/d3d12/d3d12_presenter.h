@@ -226,6 +226,11 @@ class D3D12Presenter final : public Presenter {
       external_copy_allocators_;
   Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> external_copy_list_;
   D3D12SubmissionTracker external_copy_submission_tracker_;
+  // The guest output each allocator's copy reads, kept until that allocator is reused (its copy
+  // done): DriverRefreshGuestOutput releases a mailbox image of another size after the commands
+  // that wrote it, not after a copy submitted later.
+  std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, kExternalCopyAllocators>
+      external_copy_sources_;
 
   const D3D12Provider& provider_;
 

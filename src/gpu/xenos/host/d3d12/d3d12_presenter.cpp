@@ -295,6 +295,8 @@ bool D3D12Presenter::CopyGuestOutputExternal(const xenos::GuestOutputCopy& reque
   ID3D12CommandAllocator* allocator =
       external_copy_allocators_[submission % kExternalCopyAllocators].Get();
   allocator->Reset();
+  // Alive until this allocator's next copy, which waits for this one first (above).
+  external_copy_sources_[submission % kExternalCopyAllocators] = source.second;
   ID3D12GraphicsCommandList* list = external_copy_list_.Get();
   list->Reset(allocator, nullptr);
   D3D12_RESOURCE_BARRIER barrier;
