@@ -289,14 +289,28 @@ void EmitPrint(std::string& out, std::format_string<Args...> fmt, Args&&... args
   std::vformat_to(std::back_inserter(out), fmt.get(), std::make_format_args(args...));
 }
 
-/** Builds one assignment per localized nonvolatile, from the locals into ctx or back. */
+/**
+ * Builds one assignment per localized nonvolatile, from the locals into ctx or back. The copy into
+ * ctx opens a block that keeps ctx's own values, and the copy back puts them in ctx again: a
+ * function that keeps its nonvolatiles in locals skips the save and restore helpers, so without
+ * this the call into a register-sharing function would leave the locals in ctx, over the values
+ * of a register-sharing caller further up that keeps its own nonvolatiles there (Minecraft's
+ * shared sub_82563428 found its r25-r31 replaced after it called the allocator's free, which
+ * calls a shared function, and read through a pointer of 0x438).
+ */
 std::string RegisterSyncLines(const RecompilerLocalVariables& locals, bool to_ctx) {
   std::string lines;
+  std::string saves;
+  if (to_ctx)
+    EmitPrintln(lines, "\t{{");
   auto copy = [&](const std::string& name) {
-    if (to_ctx)
+    if (to_ctx) {
+      EmitPrintln(saves, "\tconst auto sv_{0} = ctx.{0};", name);
       EmitPrintln(lines, "\tctx.{0} = {0};", name);
-    else
+    } else {
       EmitPrintln(lines, "\t{0} = ctx.{0};", name);
+      EmitPrintln(saves, "\tctx.{0} = sv_{0};", name);
+    }
   };
   for (size_t i = 14; i < 32; ++i) {
     if (locals.r[i])
@@ -314,7 +328,9 @@ std::string RegisterSyncLines(const RecompilerLocalVariables& locals, bool to_ct
     if (locals.cr[i])
       copy(std::format("cr{}", i));
   }
-  return lines;
+  if (to_ctx)
+    return lines.substr(0, 3) + saves + lines.substr(3);
+  return lines + saves + "\t}\n";
 }
 
 /** Replaces each sync placeholder line with the copies, known only once the body is emitted. */
