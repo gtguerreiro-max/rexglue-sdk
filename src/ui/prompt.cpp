@@ -92,6 +92,10 @@ bool PromptDialog::Draw(ImGuiIO& io) {
     opened_ = true;
     first_draw = true;
   }
+  // Centred every frame: an auto-sized modal is centred by its first frame's size (empty), so at
+  // a larger dialog scale (ui.dialog_scale) it grew down from near the top of the screen.
+  ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always,
+                          ImVec2(0.5f, 0.5f));
   if (!ImGui::BeginPopupModal(label_.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
     Complete({});
     closing_ = true;

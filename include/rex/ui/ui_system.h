@@ -141,6 +141,10 @@ class REX_UI_API UISettings final : public SettingOwner {
               kRestart);
   REX_SETTING(f64, cursor_timeout, 0.0, "Seconds before an idle cursor hides, 0 never hides",
               Range{0.0, 3600.0});
+  REX_SETTING(i32, dialog_scale, 0,
+              "Size of the system dialogs (keyboard, message boxes), 0: once per 360 lines of "
+              "the window (twice on a 720p or 800p screen such as the Steam Deck's)",
+              Range{0, 8});
 };
 
 /**

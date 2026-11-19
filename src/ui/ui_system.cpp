@@ -1,6 +1,7 @@
 #include "ui/ui_system.h"
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <exception>
 #include <format>
@@ -58,6 +59,21 @@ UISystem::State::State(UISystem& owner_system) : owner(owner_system) {}
 UISystem::State::~State() = default;
 
 rex::ui::UISettings::UISettings() : SettingOwner("ui") {}
+
+namespace {
+
+// The system dialogs' scale over the display's content scale: ui.dialog_scale, or once per 360
+// logical lines of the window. Their font (ProggyTiny, 10 px) was a small box in a 1280x800
+// screen: Diablo III's hero name prompt on the Steam Deck.
+f32 DialogScale(i32 setting, u32 height, f32 content_scale) {
+  if (setting > 0) {
+    return static_cast<f32>(setting);
+  }
+  const f32 logical = static_cast<f32>(height) / (content_scale > 0.0f ? content_scale : 1.0f);
+  return std::clamp(std::floor(logical / 360.0f), 1.0f, 4.0f);
+}
+
+}  // namespace
 
 UISystem::UISystem() : state_(std::make_unique<State>(*this)) {}
 
@@ -244,7 +260,9 @@ void UISystem::State::CreateImGui() {
   hooks.set_clipboard = [this](std::string_view text) { driver->SetClipboardText(text); };
   imgui = std::make_unique<ui::ImGuiHost>(std::move(hooks));
   imgui->SetDialogCounter(&dialog_count);
-  imgui->SetDisplay(window_width, window_height, content_scale);
+  imgui->SetDisplay(window_width, window_height,
+                    content_scale * DialogScale(owner.GetSettings().dialog_scale.Get(),
+                                                window_height, content_scale));
   ui::ApplyDefaultStyle(imgui->GetImGuiStyle(), style.palette, style.metrics);
   applied_style = style;
 }
@@ -494,7 +512,9 @@ void UISystem::DrawOverlays(IOverlayRenderer& renderer) {
       ui::ApplyDefaultStyle(s.imgui->GetImGuiStyle(), s.style.palette, s.style.metrics);
       s.applied_style = s.style;
     }
-    s.imgui->SetDisplay(s.window_width, s.window_height, s.content_scale);
+    s.imgui->SetDisplay(s.window_width, s.window_height,
+                        s.content_scale * DialogScale(s.owner.GetSettings().dialog_scale.Get(),
+                                                      s.window_height, s.content_scale));
     data = s.imgui->BuildFrame();
   });
   if (data) {
