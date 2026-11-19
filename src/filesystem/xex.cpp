@@ -506,11 +506,18 @@ Result<XEXImage> XEXImage::ApplyHeaderDeltaTo(const XEXImage& patch) const {
   if (target_size < out.header_.size()) {
     std::fill(out.header_.begin() + target_size, out.header_.end(), u8{0});
   }
+  // The header patch is a list of delta entries (a copy, a zero fill or LZX data each) up to an
+  // empty one, as the descriptor's size covers it (Xenia passes that size too): a DLL module's
+  // patch starts with copies (Forza Horizon's SpeechFacade_default.xexp, 0x98C -> 0xB78), and the
+  // first entry alone left its security info, and so its key, unpatched.
   const auto* info = reinterpret_cast<const u8*>(&descriptor->info);
-  const size_t info_size = size_t{descriptor->info.compressed_len} + 12;
-  if (info + info_size > patch.header_.data() + patch.header_.size()) {
+  const auto* header_end = patch.header_.data() + patch.header_.size();
+  const size_t info_offset = static_cast<size_t>(info - reinterpret_cast<const u8*>(descriptor));
+  if (info + 12 > header_end || descriptor->size < info_offset + 12) {
     return FormatError<XEXImage>("XEX header patch is out of range");
   }
+  const size_t info_size =
+      std::min<size_t>(descriptor->size - info_offset, static_cast<size_t>(header_end - info));
   if (const int code = detail::LZXApplyDelta(
           {info, info_size}, format->compression_info.normal.window_size, out.header_)) {
     return Err<XEXImage>(ErrorCategory::kCompression, "XEX header patch failed", code);
