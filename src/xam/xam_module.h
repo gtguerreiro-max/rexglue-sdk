@@ -34,6 +34,7 @@ struct XAMSettings {
   Setting<bool>* headless = nullptr;    /**< System dialogs answer at once without showing. */
   Setting<u32>* user_country = nullptr; /**< Console country code. */
   Setting<u32>* license_mask = nullptr; /**< Content license mask. */
+  Setting<std::string>* user_name = nullptr; /**< The profile's gamertag. */
 };
 
 /** Returns the settings the XAM exports read. */

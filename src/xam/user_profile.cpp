@@ -16,7 +16,10 @@
 #include <rex/logging/log_category.h>
 #include <rex/platform/file.h>
 #include <rex/xam/content_manager.h>
+#include <rex/string/text.h>
 #include <rex/xam/user_profile.h>
+
+#include "xam/xam_module.h"
 
 namespace rex::xam {
 
@@ -24,6 +27,17 @@ UserProfile::UserProfile() {
   // A title rejects any XUID with bits 54 or 55 set (mask 0x00C0000000000000).
   xuid_ = 0xB13EBABEBABEBABE;
   name_ = "User";
+  // kernel.user_name: the gamertag titles show for the player (Diablo III's "P1"), 15
+  // characters at most, as on the console.
+  if (const ::rex::Setting<std::string>* user_name = GetXAMSettings().user_name) {
+    std::u16string name = rex::string::ToUTF16(user_name->Get());
+    if (name.size() > 15) {
+      name.resize(15);
+    }
+    if (!name.empty()) {
+      name_ = rex::string::ToUTF8(name);
+    }
+  }
 
   // XPROFILE_GAMER_YAXIS_INVERSION
   AddSetting(std::make_unique<Int32Setting>(0x10040002, 0));

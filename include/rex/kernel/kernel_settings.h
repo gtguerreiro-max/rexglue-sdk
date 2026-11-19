@@ -24,6 +24,8 @@ class REX_KERNEL_API KernelSettings final : public SettingOwner {
   REX_SETTING(u32, user_language, 1, "XLanguage ID, 0 follows the host language", kUntilLaunch);
   REX_SETTING(u32, user_country, 103, "Console country code", kUntilLaunch);
   REX_SETTING(u32, license_mask, 0, "Content license mask", kUntilLaunch);
+  REX_SETTING(std::string, user_name, "User",
+              "Gamertag of the signed-in profile, up to 15 characters", kUntilLaunch);
   REX_SETTING(std::string, command_line, "", "Arguments the title sees after default.xex",
               kUntilLaunch);
 

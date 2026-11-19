@@ -87,6 +87,11 @@ Result<void> XAMModule::Init() {
     return Err(license_mask.error());
   }
   found.license_mask = *license_mask;
+  auto user_name = FindSetting<std::string>(*settings_, "kernel.user_name");
+  if (!user_name) {
+    return Err(user_name.error());
+  }
+  found.user_name = *user_name;
   g_settings = found;
   return {};
 }
