@@ -68,6 +68,7 @@ struct UISystem::State {
   Dispatcher dispatcher{*this};
   rex::ui::IUIDriver* driver = nullptr;
   rex::hid::IInputSystem* input = nullptr;
+  bool dialog_pad_armed = false;  // the dialogs' pad reading began (ImGuiHost::SetPad's first)
   rex::apu::IAudioSystem* audio = nullptr;
   rex::gpu::IGraphicsSystem* graphics = nullptr;
   MoveOnlyFunction<void(u32, u32)> resize_handler;

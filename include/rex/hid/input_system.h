@@ -251,6 +251,13 @@ REX_DECLARE_INTERFACE(IInputSystem, 2)
    * @return The text ParseInputSource reads back, or empty when the source names nothing.
    */
   [[nodiscard]] virtual std::string InputSourceToString(const InputSource& source) const = 0;
+
+  /**
+   * Reads a user's pad as GetState does, but also while the title's input is blocked: the
+   * system dialogs (AcquireUIBlock's) are answered with it. Last in the table, so code built
+   * against the interface before it keeps its slots.
+   */
+  [[nodiscard]] virtual Result<PadReading> GetStateForUI(u32 user) = 0;
 };
 
 }  // namespace rex::hid

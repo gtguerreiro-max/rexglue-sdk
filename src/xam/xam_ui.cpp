@@ -234,6 +234,8 @@ u32 ShowMessageBox(MappedWString title_ptr, MappedWString text_ptr, u32 button_c
         .title = title.empty() ? "Message Box" : title, .body = text_str, .buttons = buttons};
     auto close = [result_ptr, active_button](const ui::PromptResult& prompt) -> kernel::X_RESULT {
       *result_ptr = prompt.canceled ? static_cast<u32>(active_button) : prompt.button;
+      REXXAM_INFO("message box answered: button {}{}", static_cast<u32>(*result_ptr),
+                  prompt.canceled ? " (canceled)" : "");
       return kernel::X_ERROR_SUCCESS;
     };
     result = XAMDispatchPrompt(std::move(config), close, overlapped.GetGuestAddress());

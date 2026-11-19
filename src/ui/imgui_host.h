@@ -56,6 +56,12 @@ class ImGuiHost final {
   void SetDialogCounter(std::atomic<u32>* counter);
 
   void SetDisplay(u32 physical_width, u32 physical_height, f32 content_scale);
+  /**
+   * The pad (XInput button bits and sticks) for the dialogs' gamepad navigation, each frame a
+   * dialog is drawn. `first`: the dialogs' first frame, whose held buttons are ignored until
+   * released (the press that opened a dialog does not answer it).
+   */
+  void SetPad(u16 buttons, i16 thumb_lx, i16 thumb_ly, bool first);
   bool HandleEvent(UIEvent& event);
   void HandleEvent(InputEvent& event);
   ImDrawData* BuildFrame();
@@ -94,6 +100,8 @@ class ImGuiHost final {
   u32 touch_pointer_id_ = TouchEvent::kPointerIDNone;
   bool reset_mouse_position_after_next_frame_ = false;
   bool text_input_active_ = false;
+  u16 pad_buttons_ = 0;  // SetPad's last, after the ignored ones
+  u16 pad_ignored_ = 0;  // held when the dialogs appeared, until released
   bool changed_ = false;
   u32 display_width_ = 0;
   u32 display_height_ = 0;

@@ -499,6 +499,7 @@ bool UISystem::HasDialogs() const {
 void UISystem::DrawOverlays(IOverlayRenderer& renderer) {
   State& s = *state_;
   if (s.stopping.load() || s.dialog_count.load(std::memory_order_relaxed) == 0) {
+    s.dialog_pad_armed = false;
     return;
   }
   std::lock_guard frame(s.frame_mutex);
@@ -506,6 +507,14 @@ void UISystem::DrawOverlays(IOverlayRenderer& renderer) {
   (void)RunSynchronous([&s, &data] {
     if (!s.imgui) {
       return;
+    }
+    // The first pad's state, read past the title's input block, for the dialogs' navigation.
+    if (s.input) {
+      if (auto pad = s.input->GetStateForUI(0)) {
+        s.imgui->SetPad(pad->state.buttons, pad->state.thumb_lx, pad->state.thumb_ly,
+                        !s.dialog_pad_armed);
+        s.dialog_pad_armed = true;
+      }
     }
     if (!(s.style.palette == s.applied_style.palette) ||
         !(s.style.metrics == s.applied_style.metrics)) {

@@ -52,6 +52,13 @@ std::string PromptDialog::GetText() const {
 }
 
 void PromptDialog::DrawButtons() {
+  // B or Escape: the last button, the escape one (dialog.h).
+  if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+      ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    ImGui::CloseCurrentPopup();
+    Choose(static_cast<u32>(buttons_.size() - 1), {});
+    return;
+  }
   for (size_t index = 0; index < buttons_.size(); ++index) {
     if (index != 0) {
       ImGui::SameLine();
@@ -65,6 +72,12 @@ void PromptDialog::DrawButtons() {
 }
 
 void PromptDialog::DrawInput() {
+  if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+    ImGui::CloseCurrentPopup();
+    Complete({});
+    closing_ = true;
+    return;
+  }
   const bool entered = ImGui::InputText("##body", buffer_.data(), buffer_.size(),
                                         ImGuiInputTextFlags_EnterReturnsTrue);
   bool accepted = entered;
@@ -102,10 +115,16 @@ bool PromptDialog::Draw(ImGuiIO& io) {
     return false;
   }
   if (!config_.body.empty()) {
-    ImGui::TextWrapped("%s", config_.body.c_str());
+    // Wrapped at 32 characters' width, not the window's: an auto-sized window takes its width
+    // from its content, so a message box with two short buttons wrapped its text after every
+    // word (Asura's Wrath's "saved data does not exist" on the Steam Deck).
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetFontSize() * 32.0f);
+    ImGui::TextUnformatted(config_.body.c_str());
+    ImGui::PopTextWrapPos();
   }
   if (first_draw) {
     ImGui::SetKeyboardFocusHere();
+    ImGui::SetNavCursorVisible(true);  // the default button shows as selected
   }
   if (config_.text_input) {
     DrawInput();

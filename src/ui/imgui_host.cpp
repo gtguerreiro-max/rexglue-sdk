@@ -305,7 +305,10 @@ void ImGuiHost::Initialize() {
   };
 
   io.IniFilename = nullptr;
-  io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+  io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures | ImGuiBackendFlags_HasGamepad;
+  // The system dialogs answer to the keyboard (arrows, Enter, Escape) and the pad (SetPad), not
+  // only the mouse: on a Steam Deck in Game Mode only the touch screen reached their buttons.
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
 
   ImFontConfig font_config;
   font_config.OversampleH = font_config.OversampleV = 1;
@@ -335,6 +338,41 @@ void ImGuiHost::Initialize() {
 
   frame_time_tick_frequency_ = static_cast<f64>(rex::Clock::GetHostTickFrequency());
   last_frame_time_ticks_ = rex::Clock::GetHostTickCount();
+}
+
+void ImGuiHost::SetPad(u16 buttons, i16 thumb_lx, i16 thumb_ly, bool first) {
+  ContextScope scope(context_);
+  ImGuiIO& io = ImGui::GetIO();
+  // The left stick, past a third of its travel, as the D-pad: ImGui moves between buttons with
+  // the D-pad only (its stick scrolls).
+  constexpr i32 kDead = 10000;
+  if (thumb_ly > kDead) buttons |= 0x0001;
+  if (thumb_ly < -kDead) buttons |= 0x0002;
+  if (thumb_lx < -kDead) buttons |= 0x0004;
+  if (thumb_lx > kDead) buttons |= 0x0008;
+  if (first) {
+    pad_ignored_ = buttons;
+  }
+  pad_ignored_ &= buttons;
+  buttons = static_cast<u16>(buttons & ~pad_ignored_);
+  static constexpr struct {
+    u16 bit;
+    ImGuiKey key;
+  } kButtons[] = {
+      {0x1000, ImGuiKey_GamepadFaceDown},  {0x2000, ImGuiKey_GamepadFaceRight},
+      {0x4000, ImGuiKey_GamepadFaceLeft},  {0x8000, ImGuiKey_GamepadFaceUp},
+      {0x0001, ImGuiKey_GamepadDpadUp},    {0x0002, ImGuiKey_GamepadDpadDown},
+      {0x0004, ImGuiKey_GamepadDpadLeft},  {0x0008, ImGuiKey_GamepadDpadRight},
+      {0x0010, ImGuiKey_GamepadStart},     {0x0020, ImGuiKey_GamepadBack},
+      {0x0100, ImGuiKey_GamepadL1},        {0x0200, ImGuiKey_GamepadR1},
+  };
+  for (const auto& b : kButtons) {
+    const bool down = (buttons & b.bit) != 0;
+    if (down != ((pad_buttons_ & b.bit) != 0)) {
+      io.AddKeyEvent(b.key, down);
+    }
+  }
+  pad_buttons_ = buttons;
 }
 
 void ImGuiHost::SetDisplay(u32 physical_width, u32 physical_height, f32 content_scale) {
