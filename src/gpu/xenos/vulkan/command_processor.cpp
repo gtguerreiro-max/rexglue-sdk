@@ -628,13 +628,7 @@ bool VulkanCommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuff
     if (fake_sample_count < 0) {
       return true;
     }
-    bool is_end_via_z_pass =
-        sample_counts->ZPass_A == kQueryFinished || sample_counts->ZPass_B == kQueryFinished;
-    bool is_end_via_z_fail =
-        sample_counts->ZFail_A == kQueryFinished || sample_counts->ZFail_B == kQueryFinished;
-    WriteSampleCounts(*sample_counts, is_end_via_z_pass || is_end_via_z_fail
-                                          ? static_cast<u32>(fake_sample_count)
-                                          : 0);
+    WriteFakeSampleCounts(*sample_counts, static_cast<u32>(fake_sample_count));
     return true;
   };
 

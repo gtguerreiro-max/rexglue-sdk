@@ -201,6 +201,8 @@ class REX_GPU_XENOS_API CommandProcessor : public rex::NonCopyable {
   void InvalidateVertexBufferResidencyRange(u32 first_vfetch, u32 last_vfetch);
 
   u32 occlusion_query_cursor_ = 0;
+  // WriteFakeSampleCounts's running sample counter (ZPass and Total; it wraps as the GPU's does).
+  u32 fake_sample_counter_ = 0;
   u64 vertex_buffers_in_sync_[2] = {};
 
   struct IndexBuffer {
@@ -219,6 +221,14 @@ class REX_GPU_XENOS_API CommandProcessor : public rex::NonCopyable {
    * @param samples The passed sample count for Total_A and ZPass_A. Every other field is 0.
    */
   static void WriteSampleCounts(xenos::DepthSampleCounts& counts, u32 samples);
+  /**
+   * The fake result of an EVENT_WRITE_ZPD (query_occlusion_fake_sample_count): the Xenos's ZPD is
+   * four free-running sample counters that every event dumps, and D3D subtracts two reports (a
+   * query's BEGIN from its END, or the reports of a QueryBatch, where only the last END holds the
+   * 0xFFFFFEED sentinel). So every report gets a running counter, advanced by the fake count at
+   * each event, and any two reports differ by at least that count: visible, whatever the order.
+   */
+  void WriteFakeSampleCounts(xenos::DepthSampleCounts& counts, u32 fake_sample_count);
   bool IsWorkerThread();
   /**
    * Runs a function on the worker without waiting for it, so a caller never blocks on a worker that

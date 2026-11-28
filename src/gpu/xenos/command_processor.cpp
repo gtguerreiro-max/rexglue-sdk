@@ -1219,6 +1219,23 @@ void CommandProcessor::WriteSampleCounts(xenos::DepthSampleCounts& counts, u32 s
   counts.ZPass_A.Store(samples, std::memory_order_release);
 }
 
+void CommandProcessor::WriteFakeSampleCounts(xenos::DepthSampleCounts& counts,
+                                             u32 fake_sample_count) {
+  fake_sample_counter_ += fake_sample_count;
+  // Each counter split across its A and B lanes, which D3D sums; the lanes a title polls (ZPass,
+  // and StencilFail_B for a QueryBatch's lock) last.
+  const u32 a = fake_sample_counter_ - (fake_sample_counter_ >> 1);
+  const u32 b = fake_sample_counter_ >> 1;
+  counts.Total_A = a;
+  counts.Total_B = b;
+  counts.ZFail_A = 0;
+  counts.ZFail_B = 0;
+  counts.StencilFail_A = 0;
+  counts.ZPass_B.Store(b, std::memory_order_release);
+  counts.ZPass_A.Store(a, std::memory_order_release);
+  counts.StencilFail_B.Store(0, std::memory_order_release);
+}
+
 bool CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffer* reader,
                                                           [[maybe_unused]] u32 packet, u32 count) {
   REX_ASSERT(count == 1);
@@ -1234,15 +1251,9 @@ bool CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffer* re
     if (!sample_counts) {
       return true;
     }
-    // D3D writes 0xFFFFFEED to these locations only on D3DISSUE_END to mark a finished query.
-    bool is_end_via_z_pass =
-        sample_counts->ZPass_A == kQueryFinished || sample_counts->ZPass_B == kQueryFinished;
-    // Older D3D versions check ZFail.
-    bool is_end_via_z_fail =
-        sample_counts->ZFail_A == kQueryFinished || sample_counts->ZFail_B == kQueryFinished;
-    WriteSampleCounts(*sample_counts, is_end_via_z_pass || is_end_via_z_fail
-                                          ? static_cast<u32>(fake_sample_count)
-                                          : 0);
+    // Every event gets the running counter, BEGIN and END alike. Writing 0 where D3D left no
+    // 0xFFFFFEED read every query of a QueryBatch but the last as 0 samples.
+    WriteFakeSampleCounts(*sample_counts, static_cast<u32>(fake_sample_count));
   }
 
   return true;
